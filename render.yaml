@@ -1,0 +1,10 @@
+﻿services:
+  - type: web
+    name: cloudborealis-server
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: CB_API_SECRET
+        value: cloudborealis-secret-2025
