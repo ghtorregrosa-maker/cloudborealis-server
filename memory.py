@@ -1,5 +1,5 @@
-"""
-memory.py — Memoria persistente evolutiva en JSON con sincronización a la nube.
+﻿"""
+memory.py â€” Memoria persistente evolutiva en JSON con sincronizaciÃ³n a la nube.
 Registra experiencias, errores y correcciones. Thread-safe.
 """
 
@@ -17,7 +17,7 @@ import requests
 import config
 
 
-# ─── Helpers internos ─────────────────────────────────────────────────────────
+# â”€â”€â”€ Helpers internos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _now() -> str:
     return datetime.utcnow().isoformat()
@@ -38,16 +38,16 @@ def _save_json(path: Path, data: Any) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# ─── Clase principal ──────────────────────────────────────────────────────────
+# â”€â”€â”€ Clase principal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class Memory:
     """
     Memoria persistente evolutiva del asistente.
     Estructura de datos:
-      memory.json        → estado general, contexto de sesión, preferencias
-      experiences.json   → lista de experiencias (acciones ejecutadas + resultado)
-      corrections.json   → correcciones aplicadas a errores detectados
-      logs.json          → log general de eventos
+      memory.json        â†’ estado general, contexto de sesiÃ³n, preferencias
+      experiences.json   â†’ lista de experiencias (acciones ejecutadas + resultado)
+      corrections.json   â†’ correcciones aplicadas a errores detectados
+      logs.json          â†’ log general de eventos
     """
 
     def __init__(self):
@@ -67,11 +67,11 @@ class Memory:
         self._memory.setdefault("blocked_actions",  [])
 
         self._persist_all()
-        print("[Memoria] ✅ Sistema de memoria inicializado correctamente.")
+        print("[Memoria] âœ… Sistema de memoria inicializado correctamente.")
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Experiencias
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def record_experience(
         self,
@@ -103,7 +103,7 @@ class Memory:
                 self._memory["total_failures"] += 1
             self._persist_all()
 
-        print(f"[Memoria] 📝 Experiencia registrada [{exp_id}] — {'✅' if success else '❌'} {action_type}")
+        print(f"[Memoria] ðŸ“ Experiencia registrada [{exp_id}] â€” {'âœ…' if success else 'âŒ'} {action_type}")
         return exp_id
 
     def get_experiences(
@@ -132,9 +132,9 @@ class Memory:
                 and cmd_lower in e.get("command", "").lower()
             ]
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Correcciones
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def record_correction(
         self,
@@ -143,7 +143,7 @@ class Memory:
         corrected_action: str,
         reason: str,
     ) -> None:
-        """Registra una corrección automática aplicada por el evaluador."""
+        """Registra una correcciÃ³n automÃ¡tica aplicada por el evaluador."""
         correction = {
             "id":               str(uuid.uuid4())[:8],
             "timestamp":        _now(),
@@ -156,25 +156,25 @@ class Memory:
             self._corrections.append(correction)
             self._memory["total_corrections"] += 1
             self._persist_all()
-        print(f"[Memoria] 🔧 Corrección registrada — Patrón: {pattern}")
+        print(f"[Memoria] ðŸ”§ CorrecciÃ³n registrada â€” PatrÃ³n: {pattern}")
 
     def get_corrections(self) -> List[Dict]:
         with self._lock:
             return list(self._corrections)
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Acciones bloqueadas
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def block_action(self, action_key: str, reason: str) -> None:
-        """Bloquea una acción que ha fallado repetidamente."""
+        """Bloquea una acciÃ³n que ha fallado repetidamente."""
         entry = {"action_key": action_key, "reason": reason, "blocked_at": _now()}
         with self._lock:
             existing = [b["action_key"] for b in self._memory["blocked_actions"]]
             if action_key not in existing:
                 self._memory["blocked_actions"].append(entry)
                 self._persist_all()
-        print(f"[Memoria] 🚫 Acción bloqueada: {action_key} — {reason}")
+        print(f"[Memoria] ðŸš« AcciÃ³n bloqueada: {action_key} â€” {reason}")
 
     def is_blocked(self, action_key: str) -> bool:
         with self._lock:
@@ -186,11 +186,11 @@ class Memory:
                 b for b in self._memory["blocked_actions"] if b["action_key"] != action_key
             ]
             self._persist_all()
-        print(f"[Memoria] ✅ Acción desbloqueada: {action_key}")
+        print(f"[Memoria] âœ… AcciÃ³n desbloqueada: {action_key}")
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Preferencias / contexto
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def set_preference(self, key: str, value: Any) -> None:
         with self._lock:
@@ -201,9 +201,9 @@ class Memory:
         with self._lock:
             return self._memory["preferences"].get(key, default)
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Logs
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def log(self, level: str, module: str, message: str) -> None:
         entry = {
@@ -214,7 +214,7 @@ class Memory:
         }
         with self._lock:
             self._logs.append(entry)
-            # Mantener solo los últimos 1000 logs en memoria
+            # Mantener solo los Ãºltimos 1000 logs en memoria
             if len(self._logs) > 1000:
                 self._logs = self._logs[-1000:]
             _save_json(config.LOGS_FILE, self._logs)
@@ -226,9 +226,9 @@ class Memory:
             data = [l for l in data if l.get("level") == level.upper()]
         return data[-limit:]
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Métricas
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # MÃ©tricas
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_metrics(self) -> Dict[str, Any]:
         with self._lock:
@@ -240,9 +240,9 @@ class Memory:
         m["total_experiences"] = len(self._experiences)
         return m
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Persistencia y sincronización
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Persistencia y sincronizaciÃ³n
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _persist_all(self) -> None:
         """Guarda todos los archivos de estado localmente."""
@@ -258,7 +258,7 @@ class Memory:
         url = cloud_url or f"{config.CLIENT_BASE_URL}/api/memory/sync"
         payload = {
             "memory":      self._memory,
-            "experiences": self._experiences[-50:],  # últimas 50
+            "experiences": self._experiences[-50:],  # Ãºltimas 50
             "corrections": self._corrections,
         }
         try:
@@ -269,12 +269,12 @@ class Memory:
                 timeout=10,
             )
             if resp.status_code == 200:
-                print("[Memoria] ☁️  Sincronización con la nube exitosa.")
+                print("[Memoria] â˜ï¸  SincronizaciÃ³n con la nube exitosa.")
                 return True
-            print(f"[Memoria] ⚠️  Error de sincronización: HTTP {resp.status_code}")
+            print(f"[Memoria] âš ï¸  Error de sincronizaciÃ³n: HTTP {resp.status_code}")
             return False
         except requests.RequestException as e:
-            print(f"[Memoria] ⚠️  No se pudo conectar a la nube: {e}")
+            print(f"[Memoria] âš ï¸  No se pudo conectar a la nube: {e}")
             return False
 
     def load_from_cloud(self, cloud_url: Optional[str] = None) -> bool:
@@ -296,21 +296,48 @@ class Memory:
                     if "corrections" in data:
                         self._corrections = data["corrections"]
                     self._persist_all()
-                print("[Memoria] ☁️  Estado cargado desde la nube correctamente.")
+                print("[Memoria] â˜ï¸  Estado cargado desde la nube correctamente.")
                 return True
         except requests.RequestException as e:
-            print(f"[Memoria] ⚠️  No se pudo cargar desde la nube: {e}")
+            print(f"[Memoria] âš ï¸  No se pudo cargar desde la nube: {e}")
         return False
 
+
+    def sync_kb_to_cloud(self, cloud_url: Optional[str] = None) -> bool:
+        """Sincroniza la knowledge base completa al servidor en la nube."""
+        from pathlib import Path
+        import json as _json
+        kb_file = Path(__file__).parent / "data" / "knowledge_base.json"
+        if not kb_file.exists():
+            return False
+        try:
+            kb_data = _json.loads(kb_file.read_text(encoding="utf-8"))
+            url = cloud_url or f"{config.CLIENT_BASE_URL}/api/kb/sync"
+            resp = requests.post(
+                url,
+                json={"knowledge_base": kb_data},
+                headers={"X-API-Key": config.API_SECRET_KEY},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                print(f"[Memoria] 🧠 KB sincronizada: {data.get('temas',0)} temas, {data.get('docs',0)} docs")
+                return True
+            print(f"[Memoria] ⚠️  Error KB sync: HTTP {resp.status_code}")
+            return False
+        except Exception as e:
+            print(f"[Memoria] ⚠️  No se pudo sincronizar KB: {e}")
+            return False
+
     def reset_session(self) -> None:
-        """Reinicia el contador de sesión sin borrar el historial."""
+        """Reinicia el contador de sesiÃ³n sin borrar el historial."""
         with self._lock:
             self._memory["session_start"] = _now()
             self._persist_all()
-        print("[Memoria] 🔄 Sesión reiniciada.")
+        print("[Memoria] ðŸ”„ SesiÃ³n reiniciada.")
 
 
-# ─── Instancia global singleton ───────────────────────────────────────────────
+# â”€â”€â”€ Instancia global singleton â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _instance: Optional[Memory] = None
 
 def get_memory() -> Memory:
@@ -318,3 +345,4 @@ def get_memory() -> Memory:
     if _instance is None:
         _instance = Memory()
     return _instance
+

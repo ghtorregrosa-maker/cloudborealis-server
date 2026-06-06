@@ -454,6 +454,54 @@ async def serve_dashboard(request: Request,
 </body></html>"""
     return HTMLResponse(content=html)
 
+# ── Endpoints para sincronizar Knowledge Base ────────────────────────────
+
+class KBSyncRequest(BaseModel):
+    knowledge_base: Dict[str, Any]
+
+@app.post("/api/kb/sync")
+def sync_kb(req: KBSyncRequest, x_api_key: Optional[str] = Header(None)):
+    """Recibe y persiste la knowledge base completa desde el cliente local."""
+    verify_key(x_api_key)
+    try:
+        from knowledge_base import get_kb
+        kb = get_kb()
+        with kb._lock:
+            # Mergear topics sin perder lo que ya tiene Render
+            for key, value in req.knowledge_base.get("topics", {}).items():
+                if key not in kb._data["topics"]:
+                    kb._data["topics"][key] = value
+                else:
+                    # Agregar entries nuevas sin duplicar
+                    existing_ids = {e["id"] for e in kb._data["topics"][key].get("entries", [])}
+                    for entry in value.get("entries", []):
+                        if entry["id"] not in existing_ids:
+                            kb._data["topics"][key]["entries"].append(entry)
+            # Mergear documentos
+            existing_doc_ids = {d["id"] for d in kb._data["documents"]}
+            for doc in req.knowledge_base.get("documents", []):
+                if doc["id"] not in existing_doc_ids:
+                    kb._data["documents"].append(doc)
+            kb._data["total_learned"] = req.knowledge_base.get("total_learned", kb._data["total_learned"])
+            from knowledge_base import _save_kb
+            _save_kb(kb._data)
+        memory.log("INFO", "kb_sync", f"KB sincronizada: {len(req.knowledge_base.get('topics', {}))} temas")
+        return {"status": "ok", "temas": len(kb._data["topics"]), "docs": len(kb._data["documents"])}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error sincronizando KB: {e}")
+
+@app.get("/api/kb/load")
+def load_kb(x_api_key: Optional[str] = Header(None)):
+    """Devuelve la knowledge base completa al cliente local."""
+    verify_key(x_api_key)
+    try:
+        from knowledge_base import get_kb
+        kb = get_kb()
+        with kb._lock:
+            return {"knowledge_base": kb._data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error cargando KB: {e}")
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "EQM - El Que Manda",
@@ -484,4 +532,5 @@ def start():
 
 if __name__ == "__main__":
     start()
+
 
