@@ -370,6 +370,90 @@ def run_evaluation(x_api_key: Optional[str] = Header(None)):
             "actions_blocked": report.actions_blocked,
             "summary": str(report)}
 
+
+# ── Dashboard embebido en FastAPI (sin Streamlit, funciona en Render) ───
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard(request: Request,
+                           x_token: Optional[str] = Header(None)):
+    """Dashboard de EQM accesible desde Render."""
+    metrics  = memory.get_metrics()
+    logs     = memory.get_logs(limit=20)
+    skills_count = len(_skills_db)
+    try:
+        from knowledge_base import get_kb
+        kb_stats = get_kb().get_stats()
+        temas    = kb_stats.get("total_temas", 0)
+        docs     = kb_stats.get("total_documentos", 0)
+    except Exception:
+        temas = docs = 0
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EQM Dashboard - Borealis Corporations</title>
+<style>
+  :root {{
+    --bg: #0A0E1A; --bg2: #111827; --bg3: #1E293B;
+    --green: #00FFB2; --purple: #7B2FBE;
+    --text: #E2E8F0; --red: #FF4B6E;
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; padding: 20px; }}
+  h1 {{ color: var(--green); font-size: 1.8rem; margin-bottom: 4px; }}
+  .sub {{ color: var(--purple); font-size: 0.85rem; margin-bottom: 24px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }}
+  .card {{ background: var(--bg2); border: 1px solid var(--bg3); border-radius: 8px; padding: 20px; }}
+  .card .num {{ font-size: 2rem; font-weight: bold; color: var(--green); }}
+  .card .label {{ font-size: 0.75rem; color: #94a3b8; margin-top: 4px; }}
+  .section {{ background: var(--bg2); border-radius: 8px; padding: 20px; margin-bottom: 16px; }}
+  .section h2 {{ color: var(--purple); font-size: 1rem; margin-bottom: 12px; }}
+  .log {{ font-size: 0.75rem; padding: 4px 8px; border-left: 2px solid var(--bg3); margin-bottom: 4px; }}
+  .log.INFO {{ border-color: var(--green); }}
+  .log.ERROR {{ border-color: var(--red); }}
+  .log.WARNING {{ border-color: #f59e0b; }}
+  .skill-tag {{ display: inline-block; background: var(--bg3); border: 1px solid var(--purple);
+    color: var(--green); padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; margin: 4px; }}
+  .refresh {{ color: #94a3b8; font-size: 0.7rem; text-align: right; margin-bottom: 16px; }}
+  a {{ color: var(--green); text-decoration: none; }}
+</style>
+<meta http-equiv="refresh" content="30">
+</head>
+<body>
+<h1>⚡ EQM - El Que Manda</h1>
+<p class="sub">Borealis Corporations · Dashboard en tiempo real</p>
+<p class="refresh">Auto-refresh cada 30s · <a href="/dashboard">Refrescar ahora</a> · <a href="/">Volver al inicio</a></p>
+
+<div class="grid">
+  <div class="card"><div class="num">{metrics.get('total_operations', 0)}</div><div class="label">Operaciones totales</div></div>
+  <div class="card"><div class="num">{metrics.get('total_successes', 0)}</div><div class="label">Exitos</div></div>
+  <div class="card"><div class="num">{metrics.get('success_rate', 0)}%</div><div class="label">Tasa de exito</div></div>
+  <div class="card"><div class="num">{skills_count}</div><div class="label">Skills aprendidas</div></div>
+  <div class="card"><div class="num">{temas}</div><div class="label">Temas en KB</div></div>
+  <div class="card"><div class="num">{docs}</div><div class="label">Documentos</div></div>
+</div>
+
+<div class="section">
+  <h2>🧠 Skills Activas</h2>
+  {''.join(f'<span class="skill-tag">{"✅" if s.get("activa") else "❌"} {s["nombre"]}</span>' for s in _skills_db.values()) or '<p style="color:#94a3b8;font-size:0.8rem">Sin skills todavia. Usa POST /api/skills/learn</p>'}
+</div>
+
+<div class="section">
+  <h2>📋 Logs Recientes</h2>
+  {''.join(f'<div class="log {l.get("level","INFO")}">[{l.get("level","?")}] [{l.get("module","?")}] {str(l.get("message",""))[:100]}</div>' for l in (logs if isinstance(logs, list) else logs.get("logs",[]))) or '<p style="color:#94a3b8;font-size:0.8rem">Sin logs</p>'}
+</div>
+
+<div class="section">
+  <h2>🔗 Endpoints disponibles</h2>
+  <p style="font-size:0.8rem;color:#94a3b8">
+    POST /api/command · POST /api/auth/login · POST /api/skills/learn ·
+    GET /api/skills · GET /api/health · GET /api/metrics · GET /api/logs
+  </p>
+</div>
+</body></html>"""
+    return HTMLResponse(content=html)
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "EQM - El Que Manda",
@@ -400,3 +484,4 @@ def start():
 
 if __name__ == "__main__":
     start()
+
