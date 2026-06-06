@@ -1,5 +1,5 @@
 ﻿"""
-learner.py — Motor de aprendizaje autonomo con busqueda web real.
+learner.py - Motor de aprendizaje autonomo con busqueda web real.
 """
 from __future__ import annotations
 import re, time

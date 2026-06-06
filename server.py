@@ -1,6 +1,6 @@
 ﻿"""
-server.py — Backend EQM con auth, sesiones, analytics y monitor proactivo.
-Borealis Corporations — El Que Manda.
+server.py - Backend EQM con auth, sesiones, analytics y monitor proactivo.
+Borealis Corporations - El Que Manda.
 """
 from __future__ import annotations
 import time, pathlib

@@ -1,5 +1,5 @@
 ﻿"""
-web_search.py — Busqueda web mejorada con scraping real.
+web_search.py - Busqueda web mejorada con scraping real.
 Sin BeautifulSoup para evitar dependencias extra.
 Funciona con requests puro + regex.
 """

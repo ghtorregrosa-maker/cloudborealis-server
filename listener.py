@@ -1,5 +1,5 @@
 ﻿"""
-listener.py — NLP en espanol robusto. Acepta lenguaje libre y con/sin tildes.
+listener.py - NLP en espanol robusto. Acepta lenguaje libre y con/sin tildes.
 """
 from __future__ import annotations
 import re, unicodedata
