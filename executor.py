@@ -1,5 +1,5 @@
-"""
-executor.py — Ejecuta acciones. Busqueda web mejorada con scraping real.
+﻿"""
+executor.py â€” Ejecuta acciones. Busqueda web mejorada con scraping real.
 """
 from __future__ import annotations
 import os, platform, re, subprocess, sys, webbrowser
@@ -36,6 +36,7 @@ class Executor:
             "meta":    self._handle_meta,
             "learn":   self._handle_learn,
             "analyze": self._handle_analyze,
+            "chat":    self._handle_chat,
         }
         handler = handlers.get(action.action_type)
         if handler is None:
@@ -56,7 +57,7 @@ class Executor:
         print(str(result))
         return result
 
-    # ── App ──────────────────────────────────────────────────────
+    # â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_app(self, action: Action) -> ExecutionResult:
         target = action.target.strip()
         if not target or target == "unknown":
@@ -90,7 +91,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"No se pudo cerrar '{program}': {e}")
 
-    # ── Archivos ─────────────────────────────────────────────────
+    # â”€â”€ Archivos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_file(self, action: Action) -> ExecutionResult:
         target  = action.target or action.parameters.get("path","")
         content = action.parameters.get("content","")
@@ -148,7 +149,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error: {e}")
 
-    # ── Web ───────────────────────────────────────────────────────
+    # â”€â”€ Web â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_web(self, action: Action) -> ExecutionResult:
         if action.subtype == "navegar":  return self._navigate(action.target)
         if action.subtype == "buscar":   return self._search_web(action.target)
@@ -220,7 +221,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error al descargar: {e}")
 
-    # ── Aprendizaje ───────────────────────────────────────────────
+    # â”€â”€ Aprendizaje â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_learn(self, action: Action) -> ExecutionResult:
         try:
             from learner import get_learner
@@ -277,7 +278,7 @@ class Executor:
 
         return ExecutionResult(False, f"Subcomando de aprendizaje desconocido: {sub}")
 
-    # ── Analisis de codigo ────────────────────────────────────────
+    # â”€â”€ Analisis de codigo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_analyze(self, action: Action) -> ExecutionResult:
         try:
             from file_analyzer import get_analyzer
@@ -298,7 +299,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error al analizar: {e}")
 
-    # ── Social ────────────────────────────────────────────────────
+    # â”€â”€ Social â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_social(self, action: Action) -> ExecutionResult:
         sub     = action.subtype
         content = action.parameters.get("content", action.target)
@@ -402,7 +403,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error: {e}")
 
-    # ── Sistema ───────────────────────────────────────────────────
+    # â”€â”€ Sistema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_system(self, action: Action) -> ExecutionResult:
         if action.subtype == "info":       return self._system_info()
         if action.subtype == "screenshot": return self._take_screenshot()
@@ -425,7 +426,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error: {e}")
 
-    # ── Meta ──────────────────────────────────────────────────────
+    # â”€â”€ Meta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_meta(self, action: Action) -> ExecutionResult:
         if action.subtype == "metricas":
             m   = self.memory.get_metrics()
@@ -464,3 +465,4 @@ class Executor:
             sys.exit(0)
 
         return ExecutionResult(False, f"Comando desconocido: {action.subtype}")
+
