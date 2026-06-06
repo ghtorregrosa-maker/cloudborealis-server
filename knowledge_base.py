@@ -1,294 +1,232 @@
+﻿"""
+knowledge_base.py - Base de conocimiento persistente en MongoDB Atlas.
+Guarda todo en la nube, sin usar disco local.
 """
-knowledge_base.py — Base de conocimiento persistente del asistente.
-Almacena lo que aprende de archivos, webs y conversaciones.
-Permite buscar conocimiento por tema o pregunta.
-"""
-
 from __future__ import annotations
-
-import json
-import re
-import threading
-import uuid
+import re, uuid, threading
 from collections import Counter
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+import os
+
+# Intentar conectar a MongoDB, fallback a JSON local
+MONGO_URI = os.getenv("MONGO_URI", "")
+_use_mongo = False
+_mongo_col = None
+
+def _init_mongo():
+    global _use_mongo, _mongo_col
+    if not MONGO_URI:
+        return
+    try:
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        client.server_info()
+        db = client["eqm_db"]
+        _mongo_col = db["knowledge_base"]
+        _use_mongo = True
+        print("[KnowledgeBase] ✅ Conectado a MongoDB Atlas")
+    except Exception as e:
+        print(f"[KnowledgeBase] ⚠️  MongoDB no disponible, usando JSON local: {e}")
+
+_init_mongo()
+
+# Fallback JSON local
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
 import config
-
 KB_FILE = config.DATA_DIR / "knowledge_base.json"
-
 
 def _now() -> str:
     return datetime.utcnow().isoformat()
 
-
-def _load_kb() -> Dict:
+def _load_local() -> Dict:
     if KB_FILE.exists():
         try:
-            with open(KB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+            return json.loads(KB_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {"topics": {}, "documents": [], "conversations": [], "total_learned": 0}
 
-
-def _save_kb(data: Dict) -> None:
-    with open(KB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
+def _save_local(data: Dict) -> None:
+    try:
+        KB_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 def _extract_keywords(text: str, top_n: int = 20) -> List[str]:
-    """Extrae palabras clave de un texto."""
-    stopwords = {
-        "de", "la", "el", "en", "y", "a", "los", "las", "un", "una", "es",
-        "se", "del", "por", "con", "para", "que", "su", "al", "lo", "como",
-        "más", "pero", "sus", "le", "ya", "o", "este", "si", "no", "fue",
-        "the", "and", "or", "is", "in", "to", "of", "a", "that", "it",
-        "was", "for", "on", "are", "with", "as", "at", "be", "by", "this",
-    }
-    words = re.findall(r'\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑA-Za-z]{4,}\b', text.lower())
+    stopwords = {"de","la","el","en","y","a","los","las","un","una","es","se","del",
+                 "por","con","para","que","su","al","lo","como","the","and","or","is",
+                 "in","to","of","that","it","was","for","on","are","with","as","at"}
+    words = re.findall(r'\b[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]{4,}\b', text.lower())
     filtered = [w for w in words if w not in stopwords]
     return [w for w, _ in Counter(filtered).most_common(top_n)]
 
-
 def _similarity_score(query_words: List[str], text: str) -> float:
-    """Score simple de relevancia por coincidencia de palabras clave."""
     text_lower = text.lower()
     matches = sum(1 for w in query_words if w in text_lower)
     return matches / max(len(query_words), 1)
 
-
 class KnowledgeBase:
-    """
-    Base de conocimiento del asistente.
-    
-    Estructura:
-      topics     → {nombre_tema: {resumen, keywords, fuentes, contenido}}
-      documents  → lista de documentos procesados
-      conversations → historial de aprendizaje conversacional
-    """
-
     def __init__(self):
         self._lock = threading.Lock()
-        self._data = _load_kb()
-        print("[KnowledgeBase] Base de conocimiento cargada.")
+        if not _use_mongo:
+            self._data = _load_local()
+        print("[KnowledgeBase] Base de conocimiento lista.")
 
-    # ──────────────────────────────────────────────────────────────
-    # Guardar conocimiento
-    # ──────────────────────────────────────────────────────────────
+    def _get_data(self) -> Dict:
+        """Obtiene todos los datos desde MongoDB o local."""
+        if _use_mongo:
+            try:
+                doc = _mongo_col.find_one({"_id": "main"})
+                if doc:
+                    doc.pop("_id", None)
+                    return doc
+                return {"topics": {}, "documents": [], "conversations": [], "total_learned": 0}
+            except Exception as e:
+                print(f"[KnowledgeBase] Error leyendo MongoDB: {e}")
+                return {"topics": {}, "documents": [], "conversations": [], "total_learned": 0}
+        return self._data
 
-    def learn_topic(
-        self,
-        topic: str,
-        content: str,
-        source: str = "manual",
-        source_url: str = "",
-        metadata: Optional[Dict] = None,
-    ) -> str:
-        """Aprende un tema completo y lo indexa."""
+    def _save_data(self, data: Dict) -> None:
+        """Guarda datos en MongoDB o local."""
+        if _use_mongo:
+            try:
+                _mongo_col.replace_one({"_id": "main"}, {"_id": "main", **data}, upsert=True)
+            except Exception as e:
+                print(f"[KnowledgeBase] Error guardando en MongoDB: {e}")
+        else:
+            self._data = data
+            _save_local(data)
+
+    def learn_topic(self, topic: str, content: str, source: str = "manual",
+                    source_url: str = "", metadata: Optional[Dict] = None) -> str:
+        """Aprende un tema y lo guarda en MongoDB."""
         topic_key = topic.lower().strip().replace(" ", "_")
         keywords  = _extract_keywords(content)
         entry_id  = str(uuid.uuid4())[:8]
-
         entry = {
-            "id":         entry_id,
-            "topic":      topic,
-            "topic_key":  topic_key,
-            "content":    content[:5000],   # máx 5000 chars por entrada
-            "summary":    content[:300],
-            "keywords":   keywords,
-            "source":     source,
-            "source_url": source_url,
-            "learned_at": _now(),
-            "metadata":   metadata or {},
-            "access_count": 0,
+            "id": entry_id, "topic": topic, "topic_key": topic_key,
+            "content": content[:5000], "summary": content[:300],
+            "keywords": keywords, "source": source, "source_url": source_url,
+            "learned_at": _now(), "metadata": metadata or {}
         }
-
         with self._lock:
-            if topic_key not in self._data["topics"]:
-                self._data["topics"][topic_key] = {
-                    "topic":    topic,
-                    "entries":  [],
-                    "keywords": [],
-                }
-            self._data["topics"][topic_key]["entries"].append(entry)
-            # Merge keywords
-            all_kw = list(set(self._data["topics"][topic_key]["keywords"] + keywords))
-            self._data["topics"][topic_key]["keywords"] = all_kw[:50]
-            self._data["total_learned"] += 1
-            _save_kb(self._data)
-
-        print(f"[KnowledgeBase] Aprendido: '{topic}' [{entry_id}] — {len(keywords)} keywords")
+            data = self._get_data()
+            if topic_key not in data["topics"]:
+                data["topics"][topic_key] = {"topic": topic, "entries": [], "keywords": []}
+            data["topics"][topic_key]["entries"].append(entry)
+            all_kw = list(set(data["topics"][topic_key]["keywords"] + keywords))
+            data["topics"][topic_key]["keywords"] = all_kw[:50]
+            data["total_learned"] = data.get("total_learned", 0) + 1
+            self._save_data(data)
+        print(f"[KnowledgeBase] {'☁️ MongoDB' if _use_mongo else '💾 Local'} Aprendido: '{topic}' [{entry_id}]")
         return entry_id
 
-    def learn_document(
-        self,
-        filename: str,
-        content: str,
-        doc_type: str = "texto",
-    ) -> str:
-        """Registra un documento completo aprendido."""
+    def learn_document(self, filename: str, content: str, doc_type: str = "texto") -> str:
+        """Registra un documento en MongoDB."""
         doc_id   = str(uuid.uuid4())[:8]
         keywords = _extract_keywords(content)
-        # Dividir en chunks de 1000 chars para mejor búsqueda
         chunks   = [content[i:i+1000] for i in range(0, len(content), 1000)]
-
         doc = {
-            "id":          doc_id,
-            "filename":    filename,
-            "doc_type":    doc_type,
-            "total_chars": len(content),
-            "chunks":      chunks[:20],    # máx 20 chunks
-            "keywords":    keywords,
-            "learned_at":  _now(),
+            "id": doc_id, "filename": filename, "doc_type": doc_type,
+            "total_chars": len(content), "chunks": chunks[:20],
+            "keywords": keywords, "learned_at": _now()
         }
-
         with self._lock:
-            self._data["documents"].append(doc)
-            self._data["total_learned"] += 1
-            _save_kb(self._data)
-
-        # También aprenderlo como tema
-        topic = Path(filename).stem.replace("_", " ").replace("-", " ")
+            data = self._get_data()
+            data["documents"].append(doc)
+            data["total_learned"] = data.get("total_learned", 0) + 1
+            self._save_data(data)
+        topic = Path(filename).stem.replace("_"," ").replace("-"," ")
         self.learn_topic(topic, content[:3000], source=f"archivo:{filename}")
-
         print(f"[KnowledgeBase] Documento aprendido: '{filename}' [{doc_id}]")
         return doc_id
 
     def learn_from_conversation(self, user_input: str, context: str) -> None:
-        """Aprende de una conversación con el usuario."""
-        if len(user_input) < 20:
-            return
-        entry = {
-            "id":         str(uuid.uuid4())[:8],
-            "input":      user_input,
-            "context":    context,
-            "keywords":   _extract_keywords(user_input + " " + context),
-            "learned_at": _now(),
-        }
+        if len(user_input) < 20: return
+        entry = {"id": str(uuid.uuid4())[:8], "input": user_input,
+                 "context": context, "keywords": _extract_keywords(user_input),
+                 "learned_at": _now()}
         with self._lock:
-            self._data["conversations"].append(entry)
-            if len(self._data["conversations"]) > 500:
-                self._data["conversations"] = self._data["conversations"][-500:]
-            _save_kb(self._data)
-
-    # ──────────────────────────────────────────────────────────────
-    # Buscar conocimiento
-    # ──────────────────────────────────────────────────────────────
+            data = self._get_data()
+            data["conversations"].append(entry)
+            if len(data["conversations"]) > 500:
+                data["conversations"] = data["conversations"][-500:]
+            self._save_data(data)
 
     def search(self, query: str, top_k: int = 5) -> List[Dict]:
-        """Busca en toda la base de conocimiento por relevancia."""
-        query_words = _extract_keywords(query, top_n=10)
-        if not query_words:
-            query_words = query.lower().split()
-
+        """Busca en la base de conocimiento."""
+        query_words = _extract_keywords(query, top_n=10) or query.lower().split()
         results = []
-
-        with self._lock:
-            # Buscar en topics
-            for topic_key, topic_data in self._data["topics"].items():
-                for entry in topic_data.get("entries", []):
-                    score = _similarity_score(
-                        query_words,
-                        entry.get("content", "") + " " + " ".join(entry.get("keywords", []))
-                    )
-                    if score > 0:
-                        results.append({
-                            "type":    "topic",
-                            "topic":   entry.get("topic", ""),
-                            "content": entry.get("content", "")[:500],
-                            "source":  entry.get("source", ""),
-                            "score":   score,
-                            "id":      entry.get("id", ""),
-                        })
-
-            # Buscar en documentos
-            for doc in self._data["documents"]:
-                for chunk in doc.get("chunks", []):
-                    score = _similarity_score(query_words, chunk)
-                    if score > 0:
-                        results.append({
-                            "type":     "document",
-                            "filename": doc.get("filename", ""),
-                            "content":  chunk[:500],
-                            "score":    score,
-                            "id":       doc.get("id", ""),
-                        })
-
-        # Ordenar por score y deduplicar
+        data = self._get_data()
+        for topic_key, topic_data in data.get("topics", {}).items():
+            for entry in topic_data.get("entries", []):
+                score = _similarity_score(
+                    query_words,
+                    entry.get("content","") + " " + " ".join(entry.get("keywords",[]))
+                )
+                if score > 0:
+                    results.append({"type":"topic","topic":entry.get("topic",""),
+                                    "content":entry.get("content","")[:500],
+                                    "source":entry.get("source",""),"score":score,
+                                    "id":entry.get("id","")})
+        for doc in data.get("documents", []):
+            for chunk in doc.get("chunks", []):
+                score = _similarity_score(query_words, chunk)
+                if score > 0:
+                    results.append({"type":"document","filename":doc.get("filename",""),
+                                    "content":chunk[:500],"score":score,"id":doc.get("id","")})
         results.sort(key=lambda x: x["score"], reverse=True)
         seen = set()
         unique = []
         for r in results:
-            key = r.get("id", "")
-            if key not in seen:
-                seen.add(key)
+            if r["id"] not in seen:
+                seen.add(r["id"])
                 unique.append(r)
-
         return unique[:top_k]
 
-    def get_topic(self, topic: str) -> Optional[Dict]:
-        """Recupera todo lo aprendido sobre un tema."""
-        topic_key = topic.lower().strip().replace(" ", "_")
-        with self._lock:
-            data = self._data["topics"].get(topic_key)
-            if data:
-                data["access_count"] = data.get("access_count", 0) + 1
-                _save_kb(self._data)
-            return data
-
     def answer_question(self, question: str) -> str:
-        """
-        Responde una pregunta usando el conocimiento almacenado.
-        Sin API — usa recuperación por relevancia.
-        """
         results = self.search(question, top_k=3)
         if not results:
             return "No tengo informacion sobre ese tema todavia. Podés enseñarme con 'aprender sobre [tema]'."
-
-        parts = [f"Basado en lo que aprendi:\n"]
+        parts = ["Basado en lo que aprendi:\n"]
         for i, r in enumerate(results, 1):
-            src   = r.get("topic") or r.get("filename", "desconocido")
+            src = r.get("topic") or r.get("filename","desconocido")
             parts.append(f"{i}. [{src}]\n   {r['content'][:300]}\n")
-
         return "\n".join(parts)
 
-    # ──────────────────────────────────────────────────────────────
-    # Estadísticas
-    # ──────────────────────────────────────────────────────────────
-
     def get_stats(self) -> Dict:
-        with self._lock:
-            return {
-                "total_temas":         len(self._data["topics"]),
-                "total_documentos":    len(self._data["documents"]),
-                "total_conversaciones":len(self._data["conversations"]),
-                "total_aprendido":     self._data["total_learned"],
-                "temas":               list(self._data["topics"].keys())[:20],
-            }
+        data = self._get_data()
+        return {
+            "total_temas": len(data.get("topics",{})),
+            "total_documentos": len(data.get("documents",[])),
+            "total_conversaciones": len(data.get("conversations",[])),
+            "total_aprendido": data.get("total_learned",0),
+            "temas": list(data.get("topics",{}).keys())[:20],
+            "storage": "MongoDB Atlas" if _use_mongo else "JSON local"
+        }
+
+    def get_topic(self, topic: str) -> Optional[Dict]:
+        topic_key = topic.lower().strip().replace(" ","_")
+        data = self._get_data()
+        return data.get("topics",{}).get(topic_key)
 
     def list_topics(self) -> List[str]:
-        with self._lock:
-            return [
-                v["topic"]
-                for v in self._data["topics"].values()
-            ]
+        data = self._get_data()
+        return [v["topic"] for v in data.get("topics",{}).values()]
 
     def clear_topic(self, topic: str) -> bool:
-        topic_key = topic.lower().strip().replace(" ", "_")
+        topic_key = topic.lower().strip().replace(" ","_")
         with self._lock:
-            if topic_key in self._data["topics"]:
-                del self._data["topics"][topic_key]
-                _save_kb(self._data)
+            data = self._get_data()
+            if topic_key in data["topics"]:
+                del data["topics"][topic_key]
+                self._save_data(data)
                 return True
         return False
 
-
-# ── Singleton ─────────────────────────────────────────────────
 _kb_instance: Optional[KnowledgeBase] = None
-
 def get_kb() -> KnowledgeBase:
     global _kb_instance
     if _kb_instance is None:
