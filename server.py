@@ -371,86 +371,206 @@ def run_evaluation(x_api_key: Optional[str] = Header(None)):
             "summary": str(report)}
 
 
-# ── Dashboard embebido en FastAPI (sin Streamlit, funciona en Render) ───
+# ── Dashboard publico interactivo para usuarios ─────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
-async def serve_dashboard(request: Request,
-                           x_token: Optional[str] = Header(None)):
-    """Dashboard de EQM accesible desde Render."""
-    metrics  = memory.get_metrics()
-    logs     = memory.get_logs(limit=20)
-    skills_count = len(_skills_db)
+async def serve_dashboard(request: Request):
+    """Dashboard publico - los usuarios chatean y ensenan a EQM."""
     try:
         from knowledge_base import get_kb
         kb_stats = get_kb().get_stats()
         temas    = kb_stats.get("total_temas", 0)
         docs     = kb_stats.get("total_documentos", 0)
+        storage  = kb_stats.get("storage", "local")
+        lista_temas = kb_stats.get("temas", [])[:20]
     except Exception:
         temas = docs = 0
+        storage = "local"
+        lista_temas = []
+
+    metrics      = memory.get_metrics()
+    skills_count = len(_skills_db)
+    temas_html   = "".join(f'<span class="tag">📚 {t.replace("_"," ")}</span>' for t in lista_temas) or '<span style="color:#64748b">Aun sin temas aprendidos</span>'
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EQM Dashboard - Borealis Corporations</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EQM - El Que Manda</title>
 <style>
-  :root {{
-    --bg: #0A0E1A; --bg2: #111827; --bg3: #1E293B;
-    --green: #00FFB2; --purple: #7B2FBE;
-    --text: #E2E8F0; --red: #FF4B6E;
-  }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; padding: 20px; }}
-  h1 {{ color: var(--green); font-size: 1.8rem; margin-bottom: 4px; }}
-  .sub {{ color: var(--purple); font-size: 0.85rem; margin-bottom: 24px; }}
-  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }}
-  .card {{ background: var(--bg2); border: 1px solid var(--bg3); border-radius: 8px; padding: 20px; }}
-  .card .num {{ font-size: 2rem; font-weight: bold; color: var(--green); }}
-  .card .label {{ font-size: 0.75rem; color: #94a3b8; margin-top: 4px; }}
-  .section {{ background: var(--bg2); border-radius: 8px; padding: 20px; margin-bottom: 16px; }}
-  .section h2 {{ color: var(--purple); font-size: 1rem; margin-bottom: 12px; }}
-  .log {{ font-size: 0.75rem; padding: 4px 8px; border-left: 2px solid var(--bg3); margin-bottom: 4px; }}
-  .log.INFO {{ border-color: var(--green); }}
-  .log.ERROR {{ border-color: var(--red); }}
-  .log.WARNING {{ border-color: #f59e0b; }}
-  .skill-tag {{ display: inline-block; background: var(--bg3); border: 1px solid var(--purple);
-    color: var(--green); padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; margin: 4px; }}
-  .refresh {{ color: #94a3b8; font-size: 0.7rem; text-align: right; margin-bottom: 16px; }}
-  a {{ color: var(--green); text-decoration: none; }}
+:root{{--bg:#0A0E1A;--bg2:#111827;--bg3:#1E293B;--green:#00FFB2;--purple:#7B2FBE;--text:#E2E8F0;--red:#FF4B6E;--muted:#64748b}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;min-height:100vh}}
+header{{background:var(--bg2);border-bottom:1px solid var(--bg3);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}}
+h1{{color:var(--green);font-size:1.4rem}}
+.sub{{color:var(--purple);font-size:0.75rem}}
+.storage{{background:var(--bg3);color:var(--green);font-size:0.7rem;padding:4px 10px;border-radius:20px}}
+.main{{display:grid;grid-template-columns:1fr 340px;gap:0;height:calc(100vh - 65px)}}
+.chat-panel{{display:flex;flex-direction:column;border-right:1px solid var(--bg3)}}
+.messages{{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}}
+.msg{{max-width:80%;padding:10px 14px;border-radius:12px;font-size:0.85rem;line-height:1.5}}
+.msg.user{{background:var(--purple);align-self:flex-end;border-radius:12px 12px 2px 12px}}
+.msg.eqm{{background:var(--bg3);align-self:flex-start;border-radius:12px 12px 12px 2px;border-left:3px solid var(--green)}}
+.msg.system{{background:transparent;color:var(--muted);font-size:0.75rem;align-self:center;text-align:center}}
+.input-area{{padding:16px;border-top:1px solid var(--bg3);display:flex;gap:8px}}
+.input-area input{{flex:1;background:var(--bg3);border:1px solid var(--bg3);color:var(--text);padding:10px 14px;border-radius:8px;font-family:inherit;font-size:0.85rem;outline:none}}
+.input-area input:focus{{border-color:var(--green)}}
+.btn{{background:var(--green);color:var(--bg);border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:bold;font-size:0.85rem;transition:opacity .2s}}
+.btn:hover{{opacity:.8}}
+.btn.learn{{background:var(--purple);color:white}}
+.side-panel{{overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}}
+.card{{background:var(--bg2);border:1px solid var(--bg3);border-radius:10px;padding:16px}}
+.card h3{{color:var(--purple);font-size:0.8rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}}
+.stats{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}
+.stat{{background:var(--bg3);border-radius:6px;padding:10px;text-align:center}}
+.stat .n{{font-size:1.4rem;font-weight:bold;color:var(--green)}}
+.stat .l{{font-size:0.65rem;color:var(--muted)}}
+.tag{{display:inline-block;background:var(--bg3);border:1px solid var(--purple);color:var(--green);padding:3px 8px;border-radius:4px;font-size:0.7rem;margin:3px}}
+.learn-form{{display:flex;flex-direction:column;gap:8px}}
+.learn-form input{{background:var(--bg3);border:1px solid var(--bg3);color:var(--text);padding:8px 12px;border-radius:6px;font-family:inherit;font-size:0.8rem;outline:none}}
+.learn-form input:focus{{border-color:var(--purple)}}
+.typing{{display:none;align-self:flex-start}}
+.typing span{{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;margin:0 2px;animation:bounce .8s infinite}}
+.typing span:nth-child(2){{animation-delay:.15s}}
+.typing span:nth-child(3){{animation-delay:.3s}}
+@keyframes bounce{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-6px)}}}}
+@media(max-width:700px){{.main{{grid-template-columns:1fr}}.side-panel{{display:none}}}}
 </style>
-<meta http-equiv="refresh" content="30">
 </head>
 <body>
-<h1>⚡ EQM - El Que Manda</h1>
-<p class="sub">Borealis Corporations · Dashboard en tiempo real</p>
-<p class="refresh">Auto-refresh cada 30s · <a href="/dashboard">Refrescar ahora</a> · <a href="/">Volver al inicio</a></p>
-
-<div class="grid">
-  <div class="card"><div class="num">{metrics.get('total_operations', 0)}</div><div class="label">Operaciones totales</div></div>
-  <div class="card"><div class="num">{metrics.get('total_successes', 0)}</div><div class="label">Exitos</div></div>
-  <div class="card"><div class="num">{metrics.get('success_rate', 0)}%</div><div class="label">Tasa de exito</div></div>
-  <div class="card"><div class="num">{skills_count}</div><div class="label">Skills aprendidas</div></div>
-  <div class="card"><div class="num">{temas}</div><div class="label">Temas en KB</div></div>
-  <div class="card"><div class="num">{docs}</div><div class="label">Documentos</div></div>
+<header>
+  <div><h1>⚡ E.Q.M.</h1><p class="sub">El Que Manda · Borealis Corporations</p></div>
+  <span class="storage">☁️ {storage}</span>
+</header>
+<div class="main">
+  <div class="chat-panel">
+    <div class="messages" id="msgs">
+      <div class="msg system">EQM aprende de cada conversacion. Todo queda en la nube.</div>
+      <div class="msg eqm">Hola! Soy EQM. Podés hablarme, preguntarme lo que aprendi, o usar el panel derecho para enseñarme temas nuevos.</div>
+    </div>
+    <div class="typing" id="typing"><span></span><span></span><span></span></div>
+    <div class="input-area">
+      <input id="inp" placeholder="Escribí un comando o pregunta..." onkeydown="if(event.key==='Enter')send()">
+      <button class="btn" onclick="send()">Enviar</button>
+    </div>
+  </div>
+  <div class="side-panel">
+    <div class="card">
+      <h3>📊 Estado</h3>
+      <div class="stats">
+        <div class="stat"><div class="n" id="sOps">{metrics.get('total_operations',0)}</div><div class="l">Operaciones</div></div>
+        <div class="stat"><div class="n" id="sSucc">{metrics.get('success_rate',0)}%</div><div class="l">Exito</div></div>
+        <div class="stat"><div class="n">{temas}</div><div class="l">Temas KB</div></div>
+        <div class="stat"><div class="n">{skills_count}</div><div class="l">Skills</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>🧠 Enseñar a EQM</h3>
+      <div class="learn-form">
+        <input id="learnTopic" placeholder="Tema: ej. produccion musical">
+        <button class="btn learn" onclick="teachEQM()">+ Enseñar este tema</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>📚 Conocimiento colectivo</h3>
+      <div id="temasList">{temas_html}</div>
+    </div>
+    <div class="card">
+      <h3>💡 Comandos rapidos</h3>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn" style="font-size:0.75rem;background:var(--bg3);color:var(--green)" onclick="sendCmd('que sabes sobre python')">que sabes sobre python</button>
+        <button class="btn" style="font-size:0.75rem;background:var(--bg3);color:var(--green)" onclick="sendCmd('listar temas')">listar temas</button>
+        <button class="btn" style="font-size:0.75rem;background:var(--bg3);color:var(--green)" onclick="sendCmd('mostrar metricas')">mostrar metricas</button>
+        <button class="btn" style="font-size:0.75rem;background:var(--bg3);color:var(--green)" onclick="sendCmd('ayuda')">ayuda</button>
+      </div>
+    </div>
+  </div>
 </div>
+<script>
+const API = window.location.origin;
+const KEY = 'cloudborealis-secret-2025';
 
-<div class="section">
-  <h2>🧠 Skills Activas</h2>
-  {''.join(f'<span class="skill-tag">{"✅" if s.get("activa") else "❌"} {s["nombre"]}</span>' for s in _skills_db.values()) or '<p style="color:#94a3b8;font-size:0.8rem">Sin skills todavia. Usa POST /api/skills/learn</p>'}
-</div>
+function addMsg(text, who){{
+  const d = document.getElementById('msgs');
+  const m = document.createElement('div');
+  m.className = 'msg ' + who;
+  m.textContent = text;
+  d.appendChild(m);
+  d.scrollTop = d.scrollHeight;
+}}
 
-<div class="section">
-  <h2>📋 Logs Recientes</h2>
-  {''.join(f'<div class="log {l.get("level","INFO")}">[{l.get("level","?")}] [{l.get("module","?")}] {str(l.get("message",""))[:100]}</div>' for l in (logs if isinstance(logs, list) else logs.get("logs",[]))) or '<p style="color:#94a3b8;font-size:0.8rem">Sin logs</p>'}
-</div>
+function showTyping(){{ document.getElementById('typing').style.display='flex'; }}
+function hideTyping(){{ document.getElementById('typing').style.display='none'; }}
 
-<div class="section">
-  <h2>🔗 Endpoints disponibles</h2>
-  <p style="font-size:0.8rem;color:#94a3b8">
-    POST /api/command · POST /api/auth/login · POST /api/skills/learn ·
-    GET /api/skills · GET /api/health · GET /api/metrics · GET /api/logs
-  </p>
-</div>
+async function send(){{
+  const inp = document.getElementById('inp');
+  const msg = inp.value.trim();
+  if(!msg) return;
+  inp.value = '';
+  addMsg(msg, 'user');
+  showTyping();
+  for(let i=0; i<4; i++){{
+    try{{
+      if(i>0){{ hideTyping(); addMsg('Despertando servidor... intento '+(i+1)+'/4','system'); showTyping(); await sleep(4000); }}
+      const res = await fetch(API+'/api/command',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json','x-api-key':KEY}},
+        body:JSON.stringify({{command:msg}}),
+        signal:AbortSignal.timeout(15000)
+      }});
+      const data = await res.json();
+      hideTyping();
+      addMsg(data.message||'Sin respuesta.','eqm');
+      return;
+    }}catch(e){{
+      if(i===3){{ hideTyping(); addMsg('Servidor no disponible. Intentá en unos segundos.','system'); }}
+    }}
+  }}
+}}
+
+async function sendCmd(cmd){{
+  document.getElementById('inp').value = cmd;
+  await send();
+}}
+
+async function teachEQM(){{
+  const topic = document.getElementById('learnTopic').value.trim();
+  if(!topic) return;
+  document.getElementById('learnTopic').value = '';
+  addMsg('Enseñando a EQM sobre: '+topic+'...','system');
+  showTyping();
+  for(let i=0; i<4; i++){{
+    try{{
+      if(i>0){{ hideTyping(); addMsg('Despertando... intento '+(i+1)+'/4','system'); showTyping(); await sleep(4000); }}
+      const res = await fetch(API+'/api/command',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json','x-api-key':KEY}},
+        body:JSON.stringify({{command:'aprender sobre '+topic}}),
+        signal:AbortSignal.timeout(20000)
+      }});
+      const data = await res.json();
+      hideTyping();
+      addMsg(data.message||'Aprendizaje completado.','eqm');
+      setTimeout(()=>location.reload(), 3000);
+      return;
+    }}catch(e){{
+      if(i===3){{ hideTyping(); addMsg('Error al aprender. Intentá de nuevo.','system'); }}
+    }}
+  }}
+}}
+
+function sleep(ms){{ return new Promise(r=>setTimeout(r,ms)); }}
+
+// Actualizar stats cada 30s
+setInterval(async ()=>{{
+  try{{
+    const r = await fetch(API+'/api/metrics',{{headers:{{'x-api-key':KEY}}}});
+    const d = await r.json();
+    document.getElementById('sOps').textContent = d.total_operations||0;
+    document.getElementById('sSucc').textContent = (d.success_rate||0)+'%';
+  }}catch(e){{}}
+}}, 30000);
+</script>
 </body></html>"""
     return HTMLResponse(content=html)
 
@@ -532,5 +652,6 @@ def start():
 
 if __name__ == "__main__":
     start()
+
 
 
