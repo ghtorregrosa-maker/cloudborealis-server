@@ -1,11 +1,11 @@
-"""
-CloudBorealisAssistant - Configuración global del sistema
+﻿"""
+CloudBorealisAssistant - ConfiguraciÃ³n global del sistema
 """
 
 import os
 from pathlib import Path
 
-# ─── Rutas base ───────────────────────────────────────────────────────────────
+# â”€â”€â”€ Rutas base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -15,13 +15,13 @@ EXPERIENCES_FILE = DATA_DIR / "experiences.json"
 CORRECTIONS_FILE = DATA_DIR / "corrections.json"
 LOGS_FILE        = DATA_DIR / "logs.json"
 
-# ─── Servidor / Cliente ───────────────────────────────────────────────────────
+# â”€â”€â”€ Servidor / Cliente â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 SERVER_HOST = os.getenv("CB_SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("CB_SERVER_PORT", "8000"))
-CLIENT_BASE_URL = os.getenv("CB_CLIENT_URL", f"http://127.0.0.1:{SERVER_PORT}")
+CLIENT_BASE_URL = os.getenv("CB_CLIENT_URL", "https://cloudborealis-server.onrender.com")
 API_SECRET_KEY  = os.getenv("CB_API_SECRET", "cloudborealis-secret-2025")
 
-# ─── APIs de redes sociales ───────────────────────────────────────────────────
+# â”€â”€â”€ APIs de redes sociales â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 TWITTER_BEARER_TOKEN    = os.getenv("TWITTER_BEARER_TOKEN", "")
 TWITTER_API_KEY         = os.getenv("TWITTER_API_KEY", "")
 TWITTER_API_SECRET      = os.getenv("TWITTER_API_SECRET", "")
@@ -34,10 +34,10 @@ REDDIT_USER_AGENT    = os.getenv("REDDIT_USER_AGENT", "CloudBorealisBot/1.0")
 REDDIT_USERNAME      = os.getenv("REDDIT_USERNAME", "")
 REDDIT_PASSWORD      = os.getenv("REDDIT_PASSWORD", "")
 
-# ─── Anthropic (NLP mejorado) ─────────────────────────────────────────────────
+# â”€â”€â”€ Anthropic (NLP mejorado) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-# ─── Configuración de seguridad ───────────────────────────────────────────────
+# â”€â”€â”€ ConfiguraciÃ³n de seguridad â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ALLOWED_PROGRAMS = [
     "notepad", "calc", "explorer", "chrome", "firefox", "edge",
     "code", "python", "cmd", "powershell", "vlc", "spotify",
@@ -47,13 +47,14 @@ BLOCKED_PATHS = [
     "/etc/passwd",
     "/etc/shadow",
 ]
-MAX_RETRIES_BEFORE_BLOCK = 3     # Bloquear acción tras N fallos iguales
+MAX_RETRIES_BEFORE_BLOCK = 3     # Bloquear acciÃ³n tras N fallos iguales
 PATTERN_WINDOW_HOURS     = 24    # Ventana para detectar patrones de error
 
-# ─── Dashboard ────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 DASHBOARD_REFRESH_SECS = 30
 LOG_MAX_DISPLAY        = 100
 
-# ─── Versión ──────────────────────────────────────────────────────────────────
+# â”€â”€â”€ VersiÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 VERSION = "1.0.0"
 APP_NAME = "CloudBorealisAssistant"
+
