@@ -1,9 +1,9 @@
 ﻿"""
-server.py - Backend EQM con auth, sesiones, analytics y monitor proactivo.
+server.py - Backend EQM con auth, sesiones, analytics, monitor proactivo y skills dinamicas.
 Borealis Corporations - El Que Manda.
 """
 from __future__ import annotations
-import time, pathlib
+import time, pathlib, json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -37,8 +37,38 @@ analytics = get_analytics()
 monitor   = get_monitor()
 monitor.start()
 
-# Ruta absoluta al frontend - funciona en cualquier entorno
+# --- Ruta absoluta al frontend - funciona en cualquier entorno ---
 FRONTEND_PATH = pathlib.Path(__file__).parent / "frontend.html"
+
+# --- Archivo donde se persisten las skills aprendidas ---
+SKILLS_PATH = pathlib.Path(__file__).parent / "skills_learned.json"
+
+# ─────────────────────────────────────────────
+# SISTEMA DE SKILLS DINAMICAS
+# ─────────────────────────────────────────────
+
+def load_skills() -> Dict[str, Any]:
+    """Carga las skills guardadas en disco."""
+    if SKILLS_PATH.exists():
+        try:
+            return json.loads(SKILLS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def save_skills(skills: Dict[str, Any]) -> None:
+    """Persiste las skills en disco."""
+    SKILLS_PATH.write_text(json.dumps(skills, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# Skills cargadas al inicio
+_skills_db: Dict[str, Any] = load_skills()
+
+class SkillRequest(BaseModel):
+    nombre: str                          # Nombre corto de la skill, ej: "buscar_twitter"
+    descripcion: str                     # Que hace la skill en lenguaje natural
+    prompt_sistema: str                  # Prompt que define el comportamiento
+    triggers: List[str] = []            # Palabras clave que activan esta skill
+    activa: bool = True
 
 class CommandRequest(BaseModel):
     command: str
@@ -68,6 +98,90 @@ def verify_key(x_api_key=None):
 def get_user_from_token(token):
     if not token: return None
     return auth.verify_token(token)
+
+def find_matching_skill(command: str) -> Optional[Dict[str, Any]]:
+    """Busca si el comando activa alguna skill aprendida por trigger."""
+    cmd_lower = command.lower()
+    for nombre, skill in _skills_db.items():
+        if not skill.get("activa", True):
+            continue
+        for trigger in skill.get("triggers", []):
+            if trigger.lower() in cmd_lower:
+                return skill
+    return None
+
+# ─────────────────────────────────────────────
+# ENDPOINTS SKILLS
+# ─────────────────────────────────────────────
+
+@app.post("/api/skills/learn")
+def learn_skill(req: SkillRequest, x_api_key: Optional[str] = Header(None),
+                x_token: Optional[str] = Header(None)):
+    """Ensena una nueva skill a EQM via prompt."""
+    session = get_user_from_token(x_token)
+    if not session and x_api_key != config.API_SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Autenticacion requerida.")
+    
+    _skills_db[req.nombre] = {
+        "nombre": req.nombre,
+        "descripcion": req.descripcion,
+        "prompt_sistema": req.prompt_sistema,
+        "triggers": req.triggers,
+        "activa": req.activa,
+        "creada": datetime.utcnow().isoformat(),
+        "autor": session["username"] if session else "api"
+    }
+    save_skills(_skills_db)
+    memory.log("INFO", "skills", f"Nueva skill aprendida: {req.nombre}")
+    return {"status": "ok", "mensaje": f"Skill '{req.nombre}' aprendida correctamente.",
+            "skill": _skills_db[req.nombre]}
+
+@app.get("/api/skills")
+def list_skills(x_api_key: Optional[str] = Header(None),
+                x_token: Optional[str] = Header(None)):
+    """Lista todas las skills que EQM conoce."""
+    session = get_user_from_token(x_token)
+    if not session and x_api_key != config.API_SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Autenticacion requerida.")
+    return {"total": len(_skills_db), "skills": list(_skills_db.values())}
+
+@app.get("/api/skills/{nombre}")
+def get_skill(nombre: str, x_api_key: Optional[str] = Header(None),
+              x_token: Optional[str] = Header(None)):
+    """Obtiene el detalle de una skill especifica."""
+    session = get_user_from_token(x_token)
+    if not session and x_api_key != config.API_SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Autenticacion requerida.")
+    if nombre not in _skills_db:
+        raise HTTPException(status_code=404, detail=f"Skill '{nombre}' no encontrada.")
+    return _skills_db[nombre]
+
+@app.patch("/api/skills/{nombre}")
+def toggle_skill(nombre: str, activa: bool,
+                 x_api_key: Optional[str] = Header(None)):
+    """Activa o desactiva una skill sin borrarla."""
+    verify_key(x_api_key)
+    if nombre not in _skills_db:
+        raise HTTPException(status_code=404, detail=f"Skill '{nombre}' no encontrada.")
+    _skills_db[nombre]["activa"] = activa
+    save_skills(_skills_db)
+    estado = "activada" if activa else "desactivada"
+    return {"status": "ok", "mensaje": f"Skill '{nombre}' {estado}."}
+
+@app.delete("/api/skills/{nombre}")
+def delete_skill(nombre: str, x_api_key: Optional[str] = Header(None)):
+    """Elimina una skill aprendida."""
+    verify_key(x_api_key)
+    if nombre not in _skills_db:
+        raise HTTPException(status_code=404, detail=f"Skill '{nombre}' no encontrada.")
+    del _skills_db[nombre]
+    save_skills(_skills_db)
+    memory.log("INFO", "skills", f"Skill eliminada: {nombre}")
+    return {"status": "ok", "mensaje": f"Skill '{nombre}' eliminada."}
+
+# ─────────────────────────────────────────────
+# ENDPOINTS ORIGINALES
+# ─────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend(request: Request):
@@ -122,6 +236,22 @@ async def run_command(req: CommandRequest, request: Request,
     start   = time.time()
     memory.log("INFO", "server", f"[{user_id}] Comando: {req.command}")
     analytics.track_message(user_id, req.command)
+
+    # Verificar si el comando activa una skill aprendida
+    matched_skill = find_matching_skill(req.command)
+    if matched_skill:
+        memory.log("INFO", "skills", f"Skill activada: {matched_skill['nombre']} para comando: {req.command}")
+        elapsed_ms = int((time.time() - start) * 1000)
+        return {
+            "success": True,
+            "message": f"[Skill: {matched_skill['nombre']}] {matched_skill['descripcion']}",
+            "data": {"skill_activada": matched_skill["nombre"],
+                     "prompt_sistema": matched_skill["prompt_sistema"]},
+            "action": {"type": "skill", "subtype": matched_skill["nombre"],
+                       "target": req.command, "source": "skills_db"},
+            "warnings": [], "response_ms": elapsed_ms, "user": user_id
+        }
+
     action     = listener.parse(req.command)
     plan       = planner.plan_single(action)
     safe_steps = planner.get_safe_steps(plan)
@@ -244,6 +374,7 @@ def run_evaluation(x_api_key: Optional[str] = Header(None)):
 def health():
     return {"status": "ok", "app": "EQM - El Que Manda",
             "company": "Borealis Corporations",
+            "skills_cargadas": len(_skills_db),
             "hora": datetime.utcnow().isoformat()}
 
 @app.get("/api/blocked")
@@ -260,6 +391,7 @@ def unblock_action(action_key: str, x_api_key: Optional[str] = Header(None)):
 def start():
     print(f"[Servidor] EQM v{config.VERSION} - Borealis Corporations")
     print(f"[Servidor] Frontend: {FRONTEND_PATH} (existe: {FRONTEND_PATH.exists()})")
+    print(f"[Servidor] Skills cargadas: {len(_skills_db)}")
     print(f"[Servidor] http://{config.SERVER_HOST}:{config.SERVER_PORT}")
     try: evaluator.evaluate()
     except Exception as e: memory.log("WARNING", "server", f"Error evaluacion: {e}")
