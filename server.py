@@ -622,6 +622,11 @@ def load_kb(x_api_key: Optional[str] = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cargando KB: {e}")
 
+
+@app.get("/api/ping")
+async def ping():
+    return {"ok": True}
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "EQM - El Que Manda",
