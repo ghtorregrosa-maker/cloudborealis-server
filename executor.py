@@ -641,3 +641,4 @@ def _get_builtin_response(texto: str) -> str:
 
     return ""
 
+
