@@ -71,80 +71,79 @@ class Executor:
 
     # ── Chat inteligente con knowledge_base ─────────────────────────────────
     def _handle_chat(self, action: Action) -> ExecutionResult:
-        """
-        Responde usando la knowledge_base primero.
-        Si no encuentra nada relevante, pide contexto al usuario.
-        Sin mencionar el proceso tecnico en ningun caso.
-        """
+        import random
         pregunta = (action.target or action.raw_command or "").strip()
         if not pregunta:
-            return ExecutionResult(True, "Estoy listo. ¿En que te puedo ayudar?")
-
-        pregunta_lower = pregunta.lower()
-
-        # Saludos y conversacion basica
-        saludos = ["hola", "buenas", "buen dia", "buenos dias", "buenas tardes",
-                   "buenas noches", "hey", "hi", "como estas", "que tal"]
-        if any(s in pregunta_lower for s in saludos):
-            return ExecutionResult(True,
-                "Hola! Soy EQM. ¿En qué te puedo ayudar hoy?")
-
-        despedidas = ["chau", "adios", "hasta luego", "bye", "nos vemos"]
-        if any(d in pregunta_lower for d in despedidas):
-            return ExecutionResult(True, "Hasta luego! Quedo disponible cuando me necesites.")
-
-        agradecimientos = ["gracias", "muchas gracias", "te lo agradezco", "genial", "perfecto"]
-        if any(a in pregunta_lower for a in agradecimientos):
-            return ExecutionResult(True, "De nada! ¿Hay algo mas en lo que te pueda ayudar?")
-
-        # Buscar en knowledge_base
+            return ExecutionResult(True, "Estoy listo. En que te puedo ayudar?")
+        p = pregunta.lower()
+        if any(s in p for s in ["hola","buenas","buen dia","hey","hi","como estas","que tal","como anda"]):
+            return ExecutionResult(True, random.choice(["Hola! En que te puedo ayudar?","Buenas! Decime que necesitas.","Hola! Que andas buscando?"]))
+        if any(d in p for d in ["chau","adios","hasta luego","bye","nos vemos"]):
+            return ExecutionResult(True, "Hasta luego! Cuando necesites algo, aca estoy.")
+        if any(a in p for a in ["gracias","muchas gracias","genial","perfecto","excelente"]):
+            return ExecutionResult(True, random.choice(["De nada! Algo mas?","Para eso estoy. En que mas te ayudo?"]))
+        if any(q in p for q in ["quien eres","que eres","presentate","para que sirves"]):
+            return ExecutionResult(True, "Soy EQM, El Que Manda. Aprendo de la web y de cada conversacion. Puedo responder preguntas, aprender temas nuevos y ejecutar tareas. En que te ayudo?")
+        palabras_clave = [w for w in p.split() if len(w) > 3]
+        contextos_tecnicos = ["programacion","lenguaje","codigo","software","framework","libreria","web","desarrollo","aprender","aprendizaje","curso","tutorial","como","hacer","que es","explicar"]
+        es_tecnico = any(c in p for c in contextos_tecnicos)
+        RUIDO = {
+            "python": ["serpiente","misil","bocage","bivittatus","kuhl","animal","cold war","nuclear","british","contingency","rafael","armament"],
+            "css": ["barco","confederado","florida","selma","ironclad","1856"],
+            "java": ["cafe","isla","indonesia"],
+        }
         try:
             from knowledge_base import get_kb
             kb = get_kb()
-            resultados = kb.search(pregunta, top_k=3)
-
-            if resultados and resultados[0]["score"] >= 0.2:
-                # Construir respuesta con el conocimiento encontrado
-                mejor = resultados[0]
-                contenido = mejor.get("content", "").strip()
-                tema = mejor.get("topic") or mejor.get("filename", "")
-
-                # Si hay mas de un resultado relevante, combinar
-                partes = [contenido[:400]]
-                for r in resultados[1:]:
-                    if r["score"] >= 0.15 and r["content"].strip():
-                        partes.append(r["content"].strip()[:250])
-
-                respuesta = " ".join(partes)
-                if len(respuesta) > 600:
-                    respuesta = respuesta[:597] + "..."
-
-                # Agregar contexto natural
-                if tema:
-                    return ExecutionResult(True,
-                        f"Sobre {tema.replace('_',' ')}: {respuesta}")
+            resultados = kb.search(pregunta, top_k=8)
+            filtrados = []
+            for r in resultados:
+                contenido_lower = r.get("content","").lower()
+                tema_lower = r.get("topic","").lower()
+                score = r.get("score", 0)
+                if score < 0.15:
+                    continue
+                es_ruido = False
+                for palabra, basura in RUIDO.items():
+                    if palabra in p and any(b in contenido_lower for b in basura):
+                        es_ruido = True
+                        break
+                if es_ruido:
+                    continue
+                coincidencias = sum(1 for w in palabras_clave if w in contenido_lower or w in tema_lower)
+                if coincidencias == 0 and score < 0.3:
+                    continue
+                r["relevancia"] = coincidencias
+                filtrados.append(r)
+            filtrados.sort(key=lambda x: (x["relevancia"], x["score"]), reverse=True)
+            if filtrados:
+                mejor = filtrados[0]
+                contenido = mejor.get("content","").strip()
+                tema = mejor.get("topic","") or mejor.get("filename","")
+                oraciones = [o.strip() for o in contenido.replace("  "," ").split(".") if len(o.strip()) > 40]
+                if oraciones:
+                    respuesta = ". ".join(oraciones[:3]) + "."
+                else:
+                    respuesta = contenido[:400]
+                if len(filtrados) > 1:
+                    extra = filtrados[1].get("content","").strip()
+                    extra_or = [o.strip() for o in extra.split(".") if len(o.strip()) > 40]
+                    if extra_or:
+                        respuesta += " " + extra_or[0] + "."
+                if len(respuesta) > 650:
+                    respuesta = respuesta[:647] + "..."
                 return ExecutionResult(True, respuesta)
-
         except Exception as e:
-            print(f"[Executor] Error buscando en KB: {e}")
+            print(f"[Executor] Error KB: {e}")
+        respuesta_base = _get_builtin_response(p)
+        if respuesta_base:
+            return ExecutionResult(True, respuesta_base)
+        return ExecutionResult(True, random.choice([
+            "No encontre informacion verificada sobre eso. Podes darme mas contexto?",
+            "Todavia no tengo datos sobre ese tema. Me das mas detalles?",
+            "No pude encontrar informacion sobre eso. Podes reformular la pregunta?",
+        ]))
 
-        # Patrones de preguntas conocidas sin KB
-        respuestas_base = _get_builtin_response(pregunta_lower)
-        if respuestas_base:
-            return ExecutionResult(True, respuestas_base)
-
-        # No sabe: pedir contexto de forma natural (sin mencionar proceso)
-        preguntas_contexto = [
-            "Interesante pregunta. ¿Podés contarme un poco mas de contexto sobre lo que necesitas?",
-            "Me gustaria ayudarte mejor. ¿Podés darme mas detalles sobre lo que estas buscando?",
-            "Para responderte bien, ¿me das mas contexto sobre el tema?",
-            "Cuéntame mas sobre lo que necesitas y te ayudo.",
-        ]
-        import random
-        return ExecutionResult(True, random.choice(preguntas_contexto))
-
-    # ── Respuestas incorporadas sin KB ──────────────────────────────────────
-    # (Se llama desde _handle_chat)
 
     # ── App ─────────────────────────────────────────────────────────────────
     def _handle_app(self, action: Action) -> ExecutionResult:
