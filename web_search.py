@@ -7,7 +7,11 @@ from typing import Any, Dict, List, Optional
 import requests
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+    "Accept": "application/json, text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control": "no-cache",
 }
 
 def fetch_url(url: str, timeout: int = 10) -> Optional[Dict]:
@@ -69,31 +73,40 @@ def search_duckduckgo(query: str, timeout: int = 10) -> List[Dict]:
     return results
 
 def search_wikipedia(query: str, timeout: int = 10) -> List[Dict]:
-    """Busca en Wikipedia en espanol."""
+    """Busca en Wikipedia en espanol e ingles como fallback."""
     results = []
-    try:
-        resp = requests.get(
-            "https://es.wikipedia.org/w/api.php",
-            params={
-                "action": "query", "format": "json", "list": "search",
-                "srsearch": query, "srlimit": 3, "srprop": "snippet"
-            },
-            headers=HEADERS, timeout=timeout
-        )
-        data = resp.json()
-        for item in data.get("query", {}).get("search", []):
-            title   = item.get("title", "")
-            snippet = re.sub(r"<[^>]+>", "", item.get("snippet", ""))
-            url     = f"https://es.wikipedia.org/wiki/{title.replace(' ','_')}"
-            if snippet:
-                results.append({
-                    "url":    url,
-                    "title":  title,
-                    "text":   snippet,
-                    "source": "wikipedia"
-                })
-    except Exception as e:
-        print(f"[WebSearch] Wikipedia error: {e}")
+    # Intentar en espanol primero, luego ingles
+    for lang in ["es", "en"]:
+        try:
+            resp = requests.get(
+                f"https://{lang}.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "format": "json", "list": "search",
+                    "srsearch": query, "srlimit": 3, "srprop": "snippet",
+                    "utf8": 1
+                },
+                headers=HEADERS, timeout=timeout
+            )
+            resp.raise_for_status()
+            text = resp.text.strip()
+            if not text:
+                continue
+            data = resp.json()
+            for item in data.get("query", {}).get("search", []):
+                title   = item.get("title", "")
+                snippet = re.sub(r"<[^>]+>", "", item.get("snippet", ""))
+                url     = f"https://{lang}.wikipedia.org/wiki/{title.replace(chr(32),chr(95))}"
+                if snippet and len(snippet) > 20:
+                    results.append({
+                        "url":    url,
+                        "title":  title,
+                        "text":   snippet,
+                        "source": f"wikipedia_{lang}"
+                    })
+            if results:
+                break
+        except Exception as e:
+            print(f"[WebSearch] Wikipedia {lang} error: {e}")
     return results
 
 def get_youtube_info(url: str, timeout: int = 10) -> Optional[Dict]:
@@ -124,3 +137,4 @@ def search_all(query: str, timeout: int = 10) -> List[Dict]:
     # Ordenar: primero los que tienen mas texto
     results.sort(key=lambda x: len(x.get("text", "")), reverse=True)
     return results
+

@@ -663,8 +663,7 @@ async def aprender_carrera(req: CarreraRequest,
     # Aprender cada materia
     for materia in req.materias[:30]:  # max 30 materias
         try:
-            query = f"{materia} {req.nombre}"
-            r = learner.learn_about_topic(query)
+            r = learner.learn_about_topic(materia)
             resultados.append({"tema": materia, "fuentes": r.facts_learned})
         except Exception as e:
             errores.append({"materia": materia, "error": str(e)})
@@ -708,6 +707,7 @@ def start():
 
 if __name__ == "__main__":
     start()
+
 
 
 
