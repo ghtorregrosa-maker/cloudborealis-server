@@ -603,8 +603,7 @@ def sync_kb(req: KBSyncRequest, x_api_key: Optional[str] = Header(None)):
                 if doc["id"] not in existing_doc_ids:
                     kb._data["documents"].append(doc)
             kb._data["total_learned"] = req.knowledge_base.get("total_learned", kb._data["total_learned"])
-            from knowledge_base import _save_kb
-            _save_kb(kb._data)
+            kb._save_data(kb._data)
         memory.log("INFO", "kb_sync", f"KB sincronizada: {len(req.knowledge_base.get('topics', {}))} temas")
         return {"status": "ok", "temas": len(kb._data["topics"]), "docs": len(kb._data["documents"])}
     except Exception as e:

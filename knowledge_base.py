@@ -232,3 +232,13 @@ def get_kb() -> KnowledgeBase:
     if _kb_instance is None:
         _kb_instance = KnowledgeBase()
     return _kb_instance
+
+
+def save_kb(data):
+    "Funcion publica para guardar KB desde fuera del modulo."
+    try:
+        KB_FILE.write_text(__import__('json').dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f'[KnowledgeBase] Error guardando: {e}')
+
+_save_kb = save_kb
