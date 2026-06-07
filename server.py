@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 import config
@@ -27,6 +27,16 @@ app = FastAPI(title="EQM El Que Manda", description="Borealis Corporations", ver
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
+
+# Middleware para forzar UTF-8 en todas las respuestas
+@app.middleware("http")
+async def force_utf8(request, call_next):
+    response = await call_next(request)
+    if "content-type" in response.headers:
+        ct = response.headers["content-type"]
+        if "charset" not in ct and ("json" in ct or "html" in ct):
+            response.headers["content-type"] = ct + "; charset=utf-8"
+    return response
 memory    = get_memory()
 evaluator = Evaluator(memory)
 listener  = Listener()
@@ -626,6 +636,48 @@ def load_kb(x_api_key: Optional[str] = Header(None)):
 async def ping():
     return {"ok": True}
 
+
+class CarreraRequest(BaseModel):
+    nombre: str                    # Ej: "Medicina", "Ingenieria en Sistemas"
+    materias: List[str] = []      # Lista de materias/modulos
+    descripcion: str = ""         # Descripcion general de la carrera
+
+@app.post("/api/carrera/aprender")
+async def aprender_carrera(req: CarreraRequest,
+                            x_api_key: Optional[str] = Header(None),
+                            x_token: Optional[str] = Header(None)):
+    """Carga una carrera entera - aprende cada materia en profundidad."""
+    session = get_user_from_token(x_token)
+    if not session and x_api_key != config.API_SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Autenticacion requerida.")
+
+    from learner import get_learner
+    learner = get_learner()
+    resultados = []
+    errores = []
+
+    # Aprender la carrera general primero
+    r = learner.learn_about_topic(req.nombre)
+    resultados.append({"tema": req.nombre, "fuentes": r.facts_learned})
+
+    # Aprender cada materia
+    for materia in req.materias[:30]:  # max 30 materias
+        try:
+            query = f"{materia} {req.nombre}"
+            r = learner.learn_about_topic(query)
+            resultados.append({"tema": materia, "fuentes": r.facts_learned})
+        except Exception as e:
+            errores.append({"materia": materia, "error": str(e)})
+
+    memory.log("INFO", "carrera", f"Carrera '{req.nombre}' cargada: {len(resultados)} temas")
+    return {
+        "status": "ok",
+        "carrera": req.nombre,
+        "temas_aprendidos": len(resultados),
+        "detalle": resultados,
+        "errores": errores
+    }
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "EQM - El Que Manda",
@@ -656,6 +708,8 @@ def start():
 
 if __name__ == "__main__":
     start()
+
+
 
 
 

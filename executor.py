@@ -70,11 +70,11 @@ class Executor:
         return result
 
     # ── Chat inteligente con knowledge_base ─────────────────────────────────
-    def _handle_chat(self, action: Action) -> ExecutionResult:
+def _handle_chat(self, action: Action) -> ExecutionResult:
         """
-        Responde usando la knowledge_base primero.
-        Si no encuentra nada relevante, pide contexto al usuario.
-        Sin mencionar el proceso tecnico en ningun caso.
+        Responde usando KB primero.
+        Si no sabe, investiga en web silenciosamente, aprende y responde.
+        Sin mencionar el proceso tecnico al usuario.
         """
         pregunta = (action.target or action.raw_command or "").strip()
         if not pregunta:
@@ -82,66 +82,69 @@ class Executor:
 
         pregunta_lower = pregunta.lower()
 
-        # Saludos y conversacion basica
-        saludos = ["hola", "buenas", "buen dia", "buenos dias", "buenas tardes",
-                   "buenas noches", "hey", "hi", "como estas", "que tal"]
-        if any(s in pregunta_lower for s in saludos):
-            return ExecutionResult(True,
-                "Hola! Soy EQM. ¿En qué te puedo ayudar hoy?")
-
-        despedidas = ["chau", "adios", "hasta luego", "bye", "nos vemos"]
-        if any(d in pregunta_lower for d in despedidas):
+        # Saludos basicos
+        if any(s in pregunta_lower for s in ["hola","buenas","buen dia","hey","hi","como estas","que tal"]):
+            return ExecutionResult(True, "Hola! Soy EQM. ¿En que te puedo ayudar hoy?")
+        if any(d in pregunta_lower for d in ["chau","adios","hasta luego","bye","nos vemos"]):
             return ExecutionResult(True, "Hasta luego! Quedo disponible cuando me necesites.")
-
-        agradecimientos = ["gracias", "muchas gracias", "te lo agradezco", "genial", "perfecto"]
-        if any(a in pregunta_lower for a in agradecimientos):
+        if any(a in pregunta_lower for a in ["gracias","muchas gracias","genial","perfecto"]):
             return ExecutionResult(True, "De nada! ¿Hay algo mas en lo que te pueda ayudar?")
 
-        # Buscar en knowledge_base
+        # 1. Buscar en knowledge_base local
         try:
             from knowledge_base import get_kb
             kb = get_kb()
             resultados = kb.search(pregunta, top_k=3)
-
-            if resultados and resultados[0]["score"] >= 0.2:
-                # Construir respuesta con el conocimiento encontrado
+            if resultados and resultados[0]["score"] >= 0.25:
                 mejor = resultados[0]
                 contenido = mejor.get("content", "").strip()
                 tema = mejor.get("topic") or mejor.get("filename", "")
-
-                # Si hay mas de un resultado relevante, combinar
                 partes = [contenido[:400]]
                 for r in resultados[1:]:
                     if r["score"] >= 0.15 and r["content"].strip():
-                        partes.append(r["content"].strip()[:250])
-
+                        partes.append(r["content"].strip()[:200])
                 respuesta = " ".join(partes)
                 if len(respuesta) > 600:
                     respuesta = respuesta[:597] + "..."
-
-                # Agregar contexto natural
-                if tema:
-                    return ExecutionResult(True,
-                        f"Sobre {tema.replace('_',' ')}: {respuesta}")
-                return ExecutionResult(True, respuesta)
-
+                prefijo = f"Sobre {tema.replace('_',' ')}: " if tema else ""
+                return ExecutionResult(True, prefijo + respuesta)
         except Exception as e:
-            print(f"[Executor] Error buscando en KB: {e}")
+            self.memory.log("WARNING", "executor", f"Error buscando en KB: {e}")
 
-        # Patrones de preguntas conocidas sin KB
-        respuestas_base = _get_builtin_response(pregunta_lower)
-        if respuestas_base:
-            return ExecutionResult(True, respuestas_base)
+        # 2. No esta en KB: investigar en web silenciosamente
+        try:
+            from web_search import search_all
+            from knowledge_base import get_kb
+            resultados_web = search_all(pregunta, timeout=8)
+            if resultados_web:
+                kb = get_kb()
+                # Aprender los resultados silenciosamente
+                for r in resultados_web[:4]:
+                    texto = r.get("text", "")
+                    if texto and len(texto) > 50:
+                        kb.learn_topic(
+                            topic=pregunta,
+                            content=texto,
+                            source=r.get("source", "web"),
+                            source_url=r.get("url", "")
+                        )
+                # Responder con el mejor resultado
+                mejor_web = next((r for r in resultados_web if len(r.get("text","")) > 80), None)
+                if mejor_web:
+                    texto = mejor_web.get("text", "").strip()[:500]
+                    return ExecutionResult(True, texto)
+        except Exception as e:
+            self.memory.log("WARNING", "executor", f"Error investigando web: {e}")
 
-        # No sabe: pedir contexto de forma natural (sin mencionar proceso)
-        preguntas_contexto = [
-            "Interesante pregunta. ¿Podés contarme un poco mas de contexto sobre lo que necesitas?",
-            "Me gustaria ayudarte mejor. ¿Podés darme mas detalles sobre lo que estas buscando?",
-            "Para responderte bien, ¿me das mas contexto sobre el tema?",
-            "Cuéntame mas sobre lo que necesitas y te ayudo.",
-        ]
+        # 3. Pedir contexto de forma natural
         import random
-        return ExecutionResult(True, random.choice(preguntas_contexto))
+        opciones = [
+            "Todavia no tengo informacion especifica sobre eso. ¿Podés contarme mas contexto?",
+            "Me gustaria ayudarte mejor. ¿Podés darme mas detalles sobre lo que buscas?",
+            "Para responderte bien necesito mas contexto. ¿De que area o tema hablamos?",
+            "Cuentame mas sobre lo que necesitas y te ayudo.",
+        ]
+        return ExecutionResult(True, random.choice(opciones))
 
     # ── Respuestas incorporadas sin KB ──────────────────────────────────────
     # (Se llama desde _handle_chat)
@@ -637,3 +640,4 @@ def _get_builtin_response(texto: str) -> str:
             return respuesta
 
     return ""
+
