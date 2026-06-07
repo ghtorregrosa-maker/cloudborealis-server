@@ -357,9 +357,9 @@ class Executor:
         elif sub == "query":
             if not target:
                 return ExecutionResult(False, "Especifica una pregunta.")
-            answer = learner.answer(target)
-            return ExecutionResult(True, answer)
-
+            from listener import Action as _Action
+            _a = _Action(action_type="chat", subtype="libre", target=target, raw_command=target)
+            return self._handle_chat(_a)
         elif sub == "list_topics":
             from knowledge_base import get_kb
             stats  = get_kb().get_stats()
