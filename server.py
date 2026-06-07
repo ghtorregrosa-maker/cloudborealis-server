@@ -617,7 +617,7 @@ def load_kb(x_api_key: Optional[str] = Header(None)):
         from knowledge_base import get_kb
         kb = get_kb()
         with kb._lock:
-            return {"knowledge_base": kb._data}
+            return {"knowledge_base": kb._get_data()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cargando KB: {e}")
 
