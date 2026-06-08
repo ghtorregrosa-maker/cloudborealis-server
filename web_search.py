@@ -67,34 +67,39 @@ def fetch_url(url: str, timeout: int = 10) -> Optional[Dict]:
         return None
 
 def search_duckduckgo(query: str, timeout: int = 10) -> List[Dict]:
-    """Busca en DuckDuckGo API y devuelve resultados."""
+    """Scraping HTML de DuckDuckGo. Funciona desde Render sin API key."""
     results = []
     try:
-        resp = requests.get(
-            "https://api.duckduckgo.com/",
-            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-            headers=HEADERS, timeout=timeout
+        url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        html = resp.text
+        snippets = re.findall(
+            r'<a class="result__snippet"[^>]*>(.*?)</a>',
+            html, re.S
         )
-        data = resp.json()
-        abstract = data.get("AbstractText", "")
-        if abstract and len(abstract) > 30:
-            results.append({
-                "url":    data.get("AbstractURL", ""),
-                "title":  data.get("Heading", query),
-                "text":   abstract,
-                "source": "duckduckgo"
-            })
-        for r in data.get("RelatedTopics", [])[:4]:
-            text = r.get("Text", "")
-            if text and len(text) > 30:
+        titles = re.findall(
+            r'<a class="result__a"[^>]*>(.*?)</a>',
+            html, re.S
+        )
+        urls = re.findall(
+            r'<a class="result__a" href="([^"]+)"',
+            html
+        )
+        for i in range(min(len(snippets), len(titles), 4)):
+            title = re.sub(r"<[^>]+>", "", titles[i]).strip()
+            text  = re.sub(r"<[^>]+>", "", snippets[i]).strip()
+            href  = urls[i] if i < len(urls) else ""
+            if text and len(text) > 20:
                 results.append({
-                    "url":    r.get("FirstURL", ""),
-                    "title":  text[:80],
+                    "url":    href,
+                    "title":  title,
                     "text":   text,
-                    "source": "duckduckgo_related"
+                    "source": "duckduckgo_html"
                 })
+        if not results:
+            print(f"[WebSearch] DuckDuckGo HTML sin resultados para: {query}")
     except Exception as e:
-        print(f"[WebSearch] DuckDuckGo error: {e}")
+        print(f"[WebSearch] DuckDuckGo HTML error: {e}")
     return results
 
 def search_wikipedia(query: str, timeout: int = 10) -> List[Dict]:
