@@ -71,81 +71,139 @@ class Executor:
 
     # ── Chat inteligente con knowledge_base ─────────────────────────────────
     def _handle_chat(self, action: Action) -> ExecutionResult:
+        """Responde de forma conversacional usando razonamiento propio."""
         import random
         pregunta = (action.target or action.raw_command or "").strip()
         if not pregunta:
             return ExecutionResult(True, "Estoy listo. En que te puedo ayudar?")
         p = pregunta.lower()
-        if any(s in p for s in ["hola","buenas","buen dia","hey","hi","como estas","que tal","como anda"]):
-            return ExecutionResult(True, random.choice(["Hola! En que te puedo ayudar?","Buenas! Decime que necesitas.","Hola! Que andas buscando?"]))
+
+        # Saludos
+        if any(s in p for s in ["hola","buenas","buen dia","hey","como estas","que tal","como andas"]):
+            from datetime import datetime
+            h = datetime.now().hour
+            momento = "Buenos dias" if h < 12 else ("Buenas tardes" if h < 19 else "Buenas noches")
+            return ExecutionResult(True, random.choice([
+                f"{momento}! En que te puedo ayudar?",
+                "Hola! Decime que necesitas.",
+                "Que onda! En que te ayudo?",
+            ]))
+
+        # Despedidas
         if any(d in p for d in ["chau","adios","hasta luego","bye","nos vemos"]):
-            return ExecutionResult(True, "Hasta luego! Cuando necesites algo, aca estoy.")
+            return ExecutionResult(True, random.choice([
+                "Hasta luego! Cuando necesites algo, aca estoy.",
+                "Chau! Fue un gusto ayudarte.",
+            ]))
+
+        # Agradecimientos
         if any(a in p for a in ["gracias","muchas gracias","genial","perfecto","excelente"]):
-            return ExecutionResult(True, random.choice(["De nada! Algo mas?","Para eso estoy. En que mas te ayudo?"]))
-        if any(q in p for q in ["quien eres","que eres","presentate","para que sirves"]):
-            return ExecutionResult(True, "Soy EQM, El Que Manda. Aprendo de la web y de cada conversacion. Puedo responder preguntas, aprender temas nuevos y ejecutar tareas. En que te ayudo?")
-        palabras_clave = [w for w in p.split() if len(w) > 3]
-        contextos_tecnicos = ["programacion","lenguaje","codigo","software","framework","libreria","web","desarrollo","aprender","aprendizaje","curso","tutorial","como","hacer","que es","explicar"]
-        es_tecnico = any(c in p for c in contextos_tecnicos)
+            return ExecutionResult(True, random.choice([
+                "De nada! Algo mas en lo que te pueda ayudar?",
+                "Para eso estoy! Seguimos?",
+            ]))
+
+        # Identidad
+        if any(q in p for q in ["quien eres","que eres","presentate","para que sirves","que podes hacer"]):
+            return ExecutionResult(True,
+                "Soy EQM, El Que Manda. Asistente de Borealis Corporations. "
+                "Puedo responder preguntas, aprender cualquier tema de internet, "
+                "buscar informacion verificada y ejecutar tareas. "
+                "Cuanto mas me ensenyas, mejor respondo.")
+
+        # Matematicas
+        math_r = self._try_math(pregunta)
+        if math_r is not None:
+            return ExecutionResult(True, math_r)
+
+        # Filtros de ruido por tema
         RUIDO = {
-            "python": ["serpiente","misil","bocage","bivittatus","kuhl","animal","cold war","nuclear","british","contingency","rafael","armament"],
-            "css": ["barco","confederado","florida","selma","ironclad","1856"],
-            "java": ["cafe","isla","indonesia"],
+            "python":      ["serpiente","misil","bocage","animal"],
+            "css":         ["barco","confederado","ironclad","florida"],
+            "java":        ["cafe","isla","indonesia"],
+            "javascript":  ["java "],
         }
+        palabras_clave = [w for w in p.split() if len(w) > 3]
+
+        # 1. Buscar en KB y razonar
         try:
             from knowledge_base import get_kb
-            kb = get_kb()
-            resultados = kb.search(pregunta, top_k=8)
+            from reasoner import reason_with_fallback
+            kb      = get_kb()
+            results = kb.search(pregunta, top_k=10)
             filtrados = []
-            for r in resultados:
-                contenido_lower = r.get("content","").lower()
-                tema_lower = r.get("topic","").lower()
-                score = r.get("score", 0)
-                if score < 0.15:
+            for r in results:
+                score   = r.get("score", 0)
+                content = r.get("content","").lower()
+                tema    = r.get("topic","").lower()
+                if score < 0.12:
                     continue
-                es_ruido = False
-                for palabra, basura in RUIDO.items():
-                    if palabra in p and any(b in contenido_lower for b in basura):
-                        es_ruido = True
-                        break
+                es_ruido = any(
+                    kw in p and any(b in content for b in basura)
+                    for kw, basura in RUIDO.items()
+                )
                 if es_ruido:
                     continue
-                coincidencias = sum(1 for w in palabras_clave if w in contenido_lower or w in tema_lower)
-                if coincidencias == 0 and score < 0.3:
+                coincidencias = sum(1 for w in palabras_clave if w in content or w in tema)
+                if coincidencias == 0 and score < 0.25:
                     continue
                 r["relevancia"] = coincidencias
                 filtrados.append(r)
-            filtrados.sort(key=lambda x: (x["relevancia"], x["score"]), reverse=True)
+            filtrados.sort(key=lambda x: (x["relevancia"], x.get("score",0)), reverse=True)
             if filtrados:
-                mejor = filtrados[0]
-                contenido = mejor.get("content","").strip()
-                tema = mejor.get("topic","") or mejor.get("filename","")
-                oraciones = [o.strip() for o in contenido.replace("  "," ").split(".") if len(o.strip()) > 40]
-                if oraciones:
-                    respuesta = ". ".join(oraciones[:3]) + "."
-                else:
-                    respuesta = contenido[:400]
-                if len(filtrados) > 1:
-                    extra = filtrados[1].get("content","").strip()
-                    extra_or = [o.strip() for o in extra.split(".") if len(o.strip()) > 40]
-                    if extra_or:
-                        respuesta += " " + extra_or[0] + "."
-                if len(respuesta) > 650:
-                    respuesta = respuesta[:647] + "..."
-                return ExecutionResult(True, respuesta)
+                respuesta = reason_with_fallback(pregunta, filtrados)
+                if respuesta and len(respuesta) > 20:
+                    return ExecutionResult(True, respuesta)
         except Exception as e:
-            print(f"[Executor] Error KB: {e}")
-        respuesta_base = _get_builtin_response(p)
-        if respuesta_base:
-            return ExecutionResult(True, respuesta_base)
+            self.memory.log("WARNING", "executor", f"KB search error: {e}")
+
+        # 2. No esta en KB: aprender y responder
+        try:
+            from learner import get_learner
+            from knowledge_base import get_kb
+            from reasoner import reason_with_fallback
+            learner = get_learner()
+            lr      = learner.learn_about_topic(pregunta)
+            if lr.success:
+                kb       = get_kb()
+                results2 = kb.search(pregunta, top_k=5)
+                f2       = [r for r in results2 if r.get("score",0) >= 0.12]
+                f2.sort(key=lambda x: x.get("score",0), reverse=True)
+                if f2:
+                    r2 = reason_with_fallback(pregunta, f2)
+                    if r2 and len(r2) > 20:
+                        return ExecutionResult(True, r2)
+            return ExecutionResult(True,
+                "Investigue sobre eso pero no encontre una respuesta puntual. "
+                "Podes ser mas especifico o usar: aprender sobre [tema]")
+        except Exception as e:
+            self.memory.log("WARNING", "executor", f"Auto-learn error: {e}")
+
+        # 3. Fallback
         return ExecutionResult(True, random.choice([
             "No encontre informacion verificada sobre eso. Podes darme mas contexto?",
-            "Todavia no tengo datos sobre ese tema. Me das mas detalles?",
-            "No pude encontrar informacion sobre eso. Podes reformular la pregunta?",
+            "Todavia no tengo datos sobre ese tema. Usa: aprender sobre [tema]",
         ]))
 
-
-    # ── App ─────────────────────────────────────────────────────────────────
+    def _try_math(self, texto: str):
+        import re as _re
+        limpio = texto.strip().rstrip("?=")
+        limpio = _re.sub(r"(?i)(cuanto\s+es|calcula|cuanto\s+da|resultado\s+de)", "", limpio).strip()
+        limpio = (limpio.replace("por","*").replace(" x ","*").replace("mas","+")
+                        .replace("menos","-").replace("dividido","/").replace("entre","/")
+                        .replace("elevado","**").replace("al cuadrado","**2").replace("^","**"))
+        limpio = _re.sub(r"[^\d\s\+\-\*\/\.\(\)\*]", "", limpio).strip()
+        if not limpio or not _re.search(r"\d", limpio) or not _re.search(r"[\+\-\*\/]", limpio):
+            return None
+        try:
+            if _re.fullmatch(r"[\d\s\+\-\*\/\.\(\)\*]+", limpio):
+                resultado = eval(limpio)
+                if isinstance(resultado, float) and resultado == int(resultado):
+                    resultado = int(resultado)
+                return f"El resultado es: {resultado}"
+        except Exception:
+            pass
+        return None
     def _handle_app(self, action: Action) -> ExecutionResult:
         target = action.target.strip()
         if not target or target == "unknown":
