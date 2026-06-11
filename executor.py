@@ -133,40 +133,6 @@ class Executor:
                 if len(respuesta) > 650:
                     respuesta = respuesta[:647] + "..."
                 return ExecutionResult(True, respuesta)
-        # ---------------------------------------------------------------------
-        # [P1.1] MODO INVESTIGADOR - Auto-nutrición desde la red soberana
-        # ---------------------------------------------------------------------
-        print(f"[EQM] Intentando auto-nutrirse de internet para: '{pregunta}'")
-        try:
-            from web_search import search_all
-            import re
-            resultados_web = search_all(pregunta, timeout=12)
-            palabras_q = [w.lower() for w in pregunta.split() if len(w) > 3]
-            
-            web_ok = [r for r in resultados_web 
-                      if any(p in r.get("text", "").lower() for p in palabras_q) 
-                      and len(r.get("text", "")) > 50]
-            
-            if web_ok:
-                fuente = web_ok[0]
-                print(f"[EQM] Data encontrada en la red. Grabando colectivamente en MongoDB Atlas...")
-                
-                kb.learn_topic(
-                    topic=pregunta,
-                    content=fuente["text"],
-                    source=fuente.get("source", "web_investigador"),
-                    source_url=fuente.get("url", "")
-                )
-                
-                texto_limpio = re.sub(r'\s+', ' ', fuente["text"].strip())
-                oraciones = [o.strip() for o in texto_limpio.split(".") if len(o.strip()) > 40]
-                
-                respuesta_final = ". ".join(oraciones[:3]) + "." if oraciones else texto_limpio[:400]
-                return ExecutionResult(True, respuesta_final)
-        except Exception as e:
-            print(f"[EQM Error] Falla en modo investigador: {e}")
-            
-        return ExecutionResult(True, f"No encontre informacion sobre '{pregunta}' en mi base colectiva ni en la red externa. Me das mas contexto?")
         except Exception as e:
             print(f"[Executor] Error KB: {e}")
         respuesta_base = _get_builtin_response(p)
