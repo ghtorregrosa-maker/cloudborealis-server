@@ -54,17 +54,29 @@ def _save_local(data: Dict) -> None:
     except Exception:
         pass
 
+import unicodedata
+
+def _norm_text(text: str) -> str:
+    """Normaliza tildes y caracteres especiales para comparacion."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", text.lower())
+        if unicodedata.category(c) != "Mn"
+    )
+
 def _extract_keywords(text: str, top_n: int = 20) -> List[str]:
+    # Normalizar tildes antes de extraer keywords
     stopwords = {"de","la","el","en","y","a","los","las","un","una","es","se","del",
                  "por","con","para","que","su","al","lo","como","the","and","or","is",
                  "in","to","of","that","it","was","for","on","are","with","as","at"}
-    words = re.findall(r'\b[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]{4,}\b', text.lower())
+    text_norm = _norm_text(text)
+    words = re.findall(r'\b[a-zA-Z]{4,}\b', text_norm)
     filtered = [w for w in words if w not in stopwords]
     return [w for w, _ in Counter(filtered).most_common(top_n)]
 
 def _similarity_score(query_words: List[str], text: str) -> float:
-    text_lower = text.lower()
-    matches = sum(1 for w in query_words if w in text_lower)
+    # Normalizar tildes en texto y query antes de comparar
+    text_norm = _norm_text(text)
+    matches = sum(1 for w in query_words if w in text_norm)
     return matches / max(len(query_words), 1)
 
 class KnowledgeBase:
@@ -242,3 +254,4 @@ def save_kb(data):
         print(f'[KnowledgeBase] Error guardando: {e}')
 
 _save_kb = save_kb
+
