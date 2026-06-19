@@ -1,4 +1,4 @@
-"""
+﻿"""
 executor.py - Ejecuta acciones. Chat con busqueda en knowledge_base.
 Sin APIs externas de IA. EQM responde con su propio conocimiento.
 """
@@ -71,57 +71,139 @@ class Executor:
 
     # ── Chat inteligente con knowledge_base ─────────────────────────────────
     def _handle_chat(self, action: Action) -> ExecutionResult:
+        """Responde de forma conversacional usando razonamiento propio."""
         import random
         pregunta = (action.target or action.raw_command or "").strip()
         if not pregunta:
             return ExecutionResult(True, "Estoy listo. En que te puedo ayudar?")
-
         p = pregunta.lower()
 
-        if any(s in p for s in ["hola","buenas","buen dia","hey","hi ","como estas",
-                                  "que tal","como andas","buenos dias","buenas noches",
-                                  "buenas tardes"]):
+        # Saludos
+        if any(s in p for s in ["hola","buenas","buen dia","hey","como estas","que tal","como andas"]):
             from datetime import datetime
             h = datetime.now().hour
             momento = "Buenos dias" if h < 12 else ("Buenas tardes" if h < 19 else "Buenas noches")
             return ExecutionResult(True, random.choice([
-                momento + "! En que te puedo ayudar?",
+                f"{momento}! En que te puedo ayudar?",
                 "Hola! Decime que necesitas.",
-                "Hola! Que andas buscando?",
+                "Que onda! En que te ayudo?",
             ]))
 
+        # Despedidas
         if any(d in p for d in ["chau","adios","hasta luego","bye","nos vemos"]):
             return ExecutionResult(True, random.choice([
                 "Hasta luego! Cuando necesites algo, aca estoy.",
-                "Chau! Fue un gusto.",
+                "Chau! Fue un gusto ayudarte.",
             ]))
 
-        if any(a in p for a in ["gracias","genial","perfecto","excelente"]):
+        # Agradecimientos
+        if any(a in p for a in ["gracias","muchas gracias","genial","perfecto","excelente"]):
             return ExecutionResult(True, random.choice([
                 "De nada! Algo mas en lo que te pueda ayudar?",
                 "Para eso estoy! Seguimos?",
             ]))
 
-        if any(q in p for q in ["quien eres","que eres","presentate","para que sirves",
-                                  "que podes hacer","como te llamas"]):
+        # Identidad
+        if any(q in p for q in ["quien eres","que eres","presentate","para que sirves","que podes hacer"]):
             return ExecutionResult(True,
-                "Soy EQM, El Que Manda. Pienso con mi propio motor de razonamiento.\n\n"
-                "No copio textos - entiendo lo que leo y respondo con mis propias palabras.\n"
-                "Cuanto mas me ensenyas, mas conecto ideas. En que te ayudo?")
+                "Soy EQM, El Que Manda. Asistente de Borealis Corporations. "
+                "Puedo responder preguntas, aprender cualquier tema de internet, "
+                "buscar informacion verificada y ejecutar tareas. "
+                "Cuanto mas me ensenyas, mejor respondo.")
 
+        # Matematicas
+        math_r = self._try_math(pregunta)
+        if math_r is not None:
+            return ExecutionResult(True, math_r)
+
+        # Filtros de ruido por tema
+        RUIDO = {
+            "python":      ["serpiente","misil","bocage","animal"],
+            "css":         ["barco","confederado","ironclad","florida"],
+            "java":        ["cafe","isla","indonesia"],
+            "javascript":  ["java "],
+        }
+        palabras_clave = [w for w in p.split() if len(w) > 3]
+
+        # 1. Buscar en KB y razonar
         try:
-            from mind import think
-            respuesta = think(pregunta, auto_learn=True)
-            if respuesta and len(respuesta) > 15:
-                return ExecutionResult(True, respuesta)
-            return ExecutionResult(True,
-                "Investigue sobre eso pero no encontre una respuesta clara. "
-                "Podes reformular la pregunta o darme mas contexto?")
+            from knowledge_base import get_kb
+            from reasoner import reason_with_fallback
+            kb      = get_kb()
+            results = kb.search(pregunta, top_k=10)
+            filtrados = []
+            for r in results:
+                score   = r.get("score", 0)
+                content = r.get("content","").lower()
+                tema    = r.get("topic","").lower()
+                if score < 0.12:
+                    continue
+                es_ruido = any(
+                    kw in p and any(b in content for b in basura)
+                    for kw, basura in RUIDO.items()
+                )
+                if es_ruido:
+                    continue
+                coincidencias = sum(1 for w in palabras_clave if w in content or w in tema)
+                if coincidencias == 0 and score < 0.25:
+                    continue
+                r["relevancia"] = coincidencias
+                filtrados.append(r)
+            filtrados.sort(key=lambda x: (x["relevancia"], x.get("score",0)), reverse=True)
+            if filtrados:
+                respuesta = reason_with_fallback(pregunta, filtrados)
+                if respuesta and len(respuesta) > 20:
+                    return ExecutionResult(True, respuesta)
         except Exception as e:
-            self.memory.log("ERROR", "executor", "mind.think() error: " + str(e))
-            return ExecutionResult(False, "Error al procesar: " + str(e))
+            self.memory.log("WARNING", "executor", f"KB search error: {e}")
 
+        # 2. No esta en KB: aprender y responder
+        try:
+            from learner import get_learner
+            from knowledge_base import get_kb
+            from reasoner import reason_with_fallback
+            learner = get_learner()
+            lr      = learner.learn_about_topic(pregunta)
+            if lr.success:
+                kb       = get_kb()
+                results2 = kb.search(pregunta, top_k=5)
+                f2       = [r for r in results2 if r.get("score",0) >= 0.12]
+                f2.sort(key=lambda x: x.get("score",0), reverse=True)
+                if f2:
+                    r2 = reason_with_fallback(pregunta, f2)
+                    if r2 and len(r2) > 20:
+                        return ExecutionResult(True, r2)
+            return ExecutionResult(True,
+                "Investigue sobre eso pero no encontre una respuesta puntual. "
+                "Podes ser mas especifico o usar: aprender sobre [tema]")
+        except Exception as e:
+            self.memory.log("WARNING", "executor", f"Auto-learn error: {e}")
 
+        # 3. Fallback
+        return ExecutionResult(True, random.choice([
+            "No encontre informacion verificada sobre eso. Podes darme mas contexto?",
+            "Todavia no tengo datos sobre ese tema. Usa: aprender sobre [tema]",
+        ]))
+
+    def _try_math(self, texto: str):
+        import re as _re
+        limpio = texto.strip().rstrip("?=")
+        limpio = _re.sub(r"(?i)(cuanto\s+es|calcula|cuanto\s+da|resultado\s+de)", "", limpio).strip()
+        limpio = (limpio.replace("por","*").replace(" x ","*").replace("mas","+")
+                        .replace("menos","-").replace("dividido","/").replace("entre","/")
+                        .replace("elevado","**").replace("al cuadrado","**2").replace("^","**"))
+        limpio = _re.sub(r"[^\d\s\+\-\*\/\.\(\)\*]", "", limpio).strip()
+        if not limpio or not _re.search(r"\d", limpio) or not _re.search(r"[\+\-\*\/]", limpio):
+            return None
+        try:
+            if _re.fullmatch(r"[\d\s\+\-\*\/\.\(\)\*]+", limpio):
+                resultado = eval(limpio)
+                if isinstance(resultado, float) and resultado == int(resultado):
+                    resultado = int(resultado)
+                return f"El resultado es: {resultado}"
+        except Exception:
+            pass
+        return None
     def _handle_app(self, action: Action) -> ExecutionResult:
         target = action.target.strip()
         if not target or target == "unknown":

@@ -1,4 +1,4 @@
-"""
+﻿"""
 executor.py - Ejecuta acciones. Chat con busqueda en knowledge_base.
 Sin APIs externas de IA. EQM responde con su propio conocimiento.
 """
