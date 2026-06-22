@@ -1,4 +1,4 @@
-"""
+﻿"""
 executor.py - Ejecuta acciones. Chat con busqueda en knowledge_base.
 Sin APIs externas de IA. EQM responde con su propio conocimiento.
 """
@@ -69,7 +69,7 @@ class Executor:
         print(str(result))
         return result
 
-    # ── Chat inteligente con knowledge_base ─────────────────────────────────
+    # â”€â”€ Chat inteligente con knowledge_base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_chat(self, action: Action) -> ExecutionResult:
         import random
         pregunta = (action.target or action.raw_command or "").strip()
@@ -155,7 +155,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"No se pudo cerrar '{program}': {e}")
 
-    # ── Archivos ─────────────────────────────────────────────────────────────
+    # â”€â”€ Archivos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_file(self, action: Action) -> ExecutionResult:
         target  = action.target or action.parameters.get("path", "")
         content = action.parameters.get("content", "")
@@ -220,7 +220,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error: {e}")
 
-    # ── Web ──────────────────────────────────────────────────────────────────
+    # â”€â”€ Web â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_web(self, action: Action) -> ExecutionResult:
         if action.subtype == "navegar":  return self._navigate(action.target)
         if action.subtype == "buscar":   return self._search_web(action.target)
@@ -273,7 +273,7 @@ class Executor:
         if found:
             msg = f"Resultados para '{query}':\n\n{results_text}"
         else:
-            msg = f"No encontre informacion directa sobre '{query}'. ¿Podés darme mas detalles?"
+            msg = f"No encontre informacion directa sobre '{query}'. Â¿PodÃ©s darme mas detalles?"
 
         return ExecutionResult(True, msg, {"query": query})
 
@@ -291,7 +291,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error al descargar: {e}")
 
-    # ── Aprendizaje ──────────────────────────────────────────────────────────
+    # â”€â”€ Aprendizaje â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_learn(self, action: Action) -> ExecutionResult:
         try:
             from learner import get_learner
@@ -349,7 +349,7 @@ class Executor:
 
         return ExecutionResult(False, f"Subcomando de aprendizaje desconocido: {sub}")
 
-    # ── Analisis de codigo ───────────────────────────────────────────────────
+    # â”€â”€ Analisis de codigo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_analyze(self, action: Action) -> ExecutionResult:
         try:
             from file_analyzer import get_analyzer
@@ -370,7 +370,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error al analizar: {e}")
 
-    # ── Social ───────────────────────────────────────────────────────────────
+    # â”€â”€ Social â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_social(self, action: Action) -> ExecutionResult:
         sub     = action.subtype
         content = action.parameters.get("content", action.target)
@@ -482,7 +482,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error: {e}")
 
-    # ── Sistema ──────────────────────────────────────────────────────────────
+    # â”€â”€ Sistema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_system(self, action: Action) -> ExecutionResult:
         if action.subtype == "info":
             return self._system_info()
@@ -513,7 +513,7 @@ class Executor:
         except Exception as e:
             return ExecutionResult(False, f"Error: {e}")
 
-    # ── Meta ─────────────────────────────────────────────────────────────────
+    # â”€â”€ Meta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_meta(self, action: Action) -> ExecutionResult:
         if action.subtype == "metricas":
             m   = self.memory.get_metrics()
@@ -554,7 +554,7 @@ class Executor:
         return ExecutionResult(False, f"Comando desconocido: {action.subtype}")
 
 
-# ── Respuestas incorporadas (sin KB, sin IA externa) ─────────────────────────
+# â”€â”€ Respuestas incorporadas (sin KB, sin IA externa) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _get_builtin_response(texto: str) -> str:
     """
     Respuestas internas para preguntas frecuentes.
@@ -597,7 +597,7 @@ def _get_builtin_response(texto: str) -> str:
         ),
         # Ayuda
         ("ayuda", "help", "comandos"): (
-            "Podés preguntarme cualquier cosa, pedirme que aprenda un tema nuevo, "
+            "PodÃ©s preguntarme cualquier cosa, pedirme que aprenda un tema nuevo, "
             "buscar informacion, o usar comandos como 'listar temas', 'mostrar metricas'. "
             "Escribi lo que necesites y te ayudo."
         ),
@@ -612,5 +612,6 @@ def _get_builtin_response(texto: str) -> str:
             return respuesta
 
     return ""
+
 
 
