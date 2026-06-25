@@ -1,16 +1,19 @@
 ﻿"""
-mind.py - Cerebro real de EQM.
-Lee, comprende, razona y responde con sus propias palabras.
-Sin API externa. v2 - filtros de relevancia corregidos.
+mind.py - Cerebro real de EQM v3.
+Recupera contexto del indice TF-IDF + web, sintetiza con Claude API.
+Aprende de la web, de conversaciones y de lo que le ensenias directamente.
 """
 from __future__ import annotations
-import re, math, json, threading, unicodedata
+import re, math, json, threading, unicodedata, os, httpx
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import config
 
 INDEX_FILE = config.DATA_DIR / "mind_index.json"
+CONV_FILE  = config.DATA_DIR / "mind_conversations.json"
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 STOPWORDS = {
     "de","la","el","en","y","a","los","las","un","una","es","se","del","por",
@@ -27,7 +30,6 @@ STOPWORDS = {
     "after","over","new","said","also","any","such","only","same","most",
 }
 
-# Palabras de contexto que ayudan a distinguir dominios
 DOMAIN_HINTS = {
     "python_lang": {"python","lenguaje","programacion","codigo","script","funcion",
                     "clase","modulo","libreria","sintaxis","variable","bucle","lista",
@@ -38,21 +40,17 @@ DOMAIN_HINTS = {
 }
 
 def _norm(text: str) -> str:
-    """Normaliza tildes para comparacion."""
     return "".join(
         c for c in unicodedata.normalize("NFD", text.lower())
         if unicodedata.category(c) != "Mn"
     )
 
 def _tok(text: str) -> List[str]:
-    """Tokeniza texto normalizando tildes y filtrando stopwords."""
     text_norm = _norm(text)
     words = re.findall(r"\b[a-z]{3,}\b", text_norm)
     return [w for w in words if w not in STOPWORDS]
 
 def _sentences(text: str) -> List[str]:
-    """Extrae oraciones limpias de un texto."""
-    # Limpiar HTML residual
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"&\w+;", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -60,7 +58,6 @@ def _sentences(text: str) -> List[str]:
     result = []
     for s in raw:
         s = s.strip()
-        # Descartar oraciones que son basura tipica de scraping
         if len(s) < 30:
             continue
         if s.lower().startswith(("siguientes","categorias","referencias",
@@ -73,7 +70,6 @@ def _sentences(text: str) -> List[str]:
     return result
 
 def _detect_domain(query: str) -> Optional[str]:
-    """Detecta el dominio de la pregunta para filtrar resultados irrelevantes."""
     qtoks = set(_tok(query))
     for domain, hints in DOMAIN_HINTS.items():
         if len(qtoks & hints) >= 1:
@@ -81,16 +77,84 @@ def _detect_domain(query: str) -> Optional[str]:
     return None
 
 def _sent_in_domain(sent: str, domain: Optional[str]) -> bool:
-    """Verifica que una oracion pertenezca al dominio correcto."""
     if domain is None:
         return True
     stoks = set(_tok(sent))
-    # Si la oracion tiene palabras del dominio opuesto, descartarla
     for d, hints in DOMAIN_HINTS.items():
         if d != domain and len(stoks & hints) >= 2:
             return False
     return True
 
+
+# ─── Memoria de conversaciones ────────────────────────────────────────────────
+
+class ConversationMemory:
+    """Recuerda el historial de la sesion y conversaciones pasadas aprendidas."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._history: List[dict] = []          # turno actual [{role, content}]
+        self._learned: List[dict] = self._load()  # conversaciones pasadas
+
+    def _load(self) -> List[dict]:
+        if CONV_FILE.exists():
+            try:
+                return json.loads(CONV_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return []
+
+    def _save(self):
+        CONV_FILE.write_text(
+            json.dumps(self._learned, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+    def add_turn(self, role: str, content: str):
+        with self._lock:
+            self._history.append({"role": role, "content": content})
+            # Mantener solo los ultimos 20 turnos en memoria activa
+            if len(self._history) > 20:
+                self._history = self._history[-20:]
+
+    def learn_exchange(self, user_msg: str, bot_msg: str, topic: str = ""):
+        """Persiste un intercambio relevante para sesiones futuras."""
+        with self._lock:
+            self._learned.append({
+                "user": user_msg,
+                "bot":  bot_msg,
+                "topic": topic,
+            })
+            if len(self._learned) > 500:
+                self._learned = self._learned[-500:]
+            self._save()
+
+    def get_history(self) -> List[dict]:
+        with self._lock:
+            return list(self._history)
+
+    def search_learned(self, query: str, top_k: int = 3) -> List[dict]:
+        """Busca en conversaciones pasadas las mas relevantes."""
+        qt = set(_tok(query))
+        scored = []
+        for ex in self._learned:
+            overlap = len(qt & set(_tok(ex.get("user","") + " " + ex.get("bot",""))))
+            if overlap > 0:
+                scored.append((overlap, ex))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [ex for _, ex in scored[:top_k]]
+
+
+_conv_mem: Optional[ConversationMemory] = None
+
+def get_conv_mem() -> ConversationMemory:
+    global _conv_mem
+    if _conv_mem is None:
+        _conv_mem = ConversationMemory()
+    return _conv_mem
+
+
+# ─── Mind (indice TF-IDF) ─────────────────────────────────────────────────────
 
 class Mind:
     def __init__(self):
@@ -178,17 +242,12 @@ class Mind:
 
     def search(self, query: str, top_k: int = 10,
                min_score: float = 0.15) -> List[dict]:
-        """
-        Busca oraciones relevantes con score minimo configurable.
-        Filtra por dominio para evitar mezclar temas homonimos.
-        """
         qt     = _tok(query)
         domain = _detect_domain(query)
         if not qt:
             return []
         scored = []
         for d in self._data["sents"]:
-            # Filtro de dominio: descartar oraciones del dominio opuesto
             if not _sent_in_domain(d["text"], domain):
                 continue
             s = self._cosine(d["id"], qt)
@@ -211,161 +270,7 @@ class Mind:
         }
 
 
-QTYPES = {
-    "cantidad": [
-        r"cu[a]nto[as]?\b", r"qu[e]\s+cantidad\b",
-        r"cu[a]ntos?\s+\w+\s+(hay|tiene|existen|son)\b",
-        r"n[u]mero\s+de\b",
-    ],
-    "definicion": [
-        r"qu[e]\s+es\b", r"qu[e]\s+son\b",
-        r"defin[ei]\w+\b", r"significa\b",
-        r"qu[e]\s+significa\b", r"concepto\s+de\b",
-    ],
-    "como": [
-        r"c[o]mo\s+(se\s+)?(hace|funciona|usar|instalar|crear|trabaja)\b",
-        r"de\s+qu[e]\s+(forma|manera)\b",
-        r"pasos\s+para\b",
-    ],
-    "quien":    [r"qui[e]n\s+(es|fue|cre[o]|fund[o])\b", r"qui[e]n\b"],
-    "cuando":   [r"cu[a]ndo\b", r"en\s+qu[e]\s+a[n]o\b", r"qu[e]\s+a[n]o\b"],
-    "donde":    [r"d[o]nde\b", r"en\s+qu[e]\s+(pa[i]s|lugar|ciudad)\b"],
-    "lista":    [r"cu[a]les\s+son\b", r"qu[e]\s+tipos\b", r"ejemplos\s+de\b"],
-    "por_que":  [r"por\s+qu[e]\b", r"raz[o]n\s+(de|por)\b"],
-    "calculo":  [r"\d+\s*[\+\-\*\/]\s*\d+", r"cuanto\s+es\s+\d+", r"calcula\b"],
-}
-
-def _qtype(question: str) -> str:
-    q = question.lower()
-    for t, pats in QTYPES.items():
-        if any(re.search(p, q) for p in pats):
-            return t
-    return "general"
-
-
-class Synthesizer:
-    def synthesize(self, question: str, sents: List[dict]) -> str:
-        if not sents:
-            return ""
-        qt    = _qtype(question)
-        texts = [s["text"] for s in sents]
-
-        if qt == "calculo":
-            r = self._math(question)
-            if r:
-                return r
-
-        if   qt == "cantidad":   return self._qty(texts, question)
-        elif qt == "definicion": return self._define(texts, question)
-        elif qt == "como":       return self._process(texts)
-        elif qt == "quien":      return self._who(texts)
-        elif qt == "cuando":     return self._when(texts)
-        elif qt == "lista":      return self._list(texts)
-        elif qt == "por_que":    return self._reason(texts)
-        else:                    return self._general(texts, question)
-
-    def _math(self, expr: str) -> Optional[str]:
-        e = re.sub(r"(?i)(cuanto\s+es|calcula|resultado\s+de)", "", expr)
-        e = (e.replace("por","*").replace("mas","+").replace("menos","-")
-               .replace("dividido","/").replace("entre","/").replace("^","**"))
-        e = re.sub(r"[^\d\s\+\-\*\/\.\(\)\*]", "", e).strip()
-        if not e or not re.search(r"\d", e) or not re.search(r"[\+\-\*\/]", e):
-            return None
-        try:
-            if re.fullmatch(r"[\d\s\+\-\*\/\.\(\)\*]+", e):
-                r = eval(e)
-                if isinstance(r, float) and r == int(r):
-                    r = int(r)
-                return f"El resultado es {r}."
-        except Exception:
-            pass
-        return None
-
-    def _qty(self, texts: List[str], q: str) -> str:
-        qw = [w for w in q.lower().split() if len(w) > 3]
-        for t in texts:
-            if re.search(r"\b\d+\b", t):
-                if sum(1 for w in qw if w in t.lower()) >= 1:
-                    return t
-        for t in texts:
-            if re.search(r"\b\d+\b", t):
-                return t
-        return self._general(texts, q)
-
-    def _define(self, texts: List[str], q: str) -> str:
-        pats = [r"\bes\s+una?\b", r"\bes\s+el\b", r"\bson\s+\w+\s+que\b",
-                r"\bse\s+define\b", r"\bconsiste\b", r"\bse\s+trata\b",
-                r"\bpermite\b", r"\bfue\s+creado\b", r"\bdesarrollado\b"]
-        for t in texts:
-            tl = t.lower()
-            if any(re.search(p, tl) for p in pats):
-                return t
-        # Fallback: la oracion con mas overlap con la pregunta
-        return self._general(texts, q)
-
-    def _process(self, texts: List[str]) -> str:
-        kw = ["primero","luego","despues","paso","para","mediante",
-              "usando","hay que","es necesario","se puede","se debe",
-              "first","then","step","using","install","run","execute"]
-        result = [t for t in texts if any(k in t.lower() for k in kw)][:3]
-        return ". ".join(result) if result else ". ".join(texts[:3])
-
-    def _who(self, texts: List[str]) -> str:
-        pat = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
-        for t in texts:
-            if pat.search(t):
-                return t
-        return texts[0]
-
-    def _when(self, texts: List[str]) -> str:
-        pat = re.compile(
-            r"\b(\d{4}|\d{1,2}\s+de\s+\w+|siglo\s+[XVI]+|en\s+los\s+a[n]os?)\b",
-            re.IGNORECASE)
-        for t in texts:
-            if pat.search(t):
-                return t
-        return texts[0]
-
-    def _list(self, texts: List[str]) -> str:
-        kw = ["incluye","comprende","son","constan","estan","destacan",
-              "forman","entre","como","tales","ejemplo"]
-        for t in texts:
-            if any(k in t.lower() for k in kw):
-                return t
-        return ". ".join(texts[:3])
-
-    def _reason(self, texts: List[str]) -> str:
-        kw = ["porque","debido","ya que","puesto que","dado que","se debe a",
-              "because","since","therefore","thus"]
-        for t in texts:
-            if any(k in t.lower() for k in kw):
-                return t
-        return texts[0]
-
-    def _general(self, texts: List[str], question: str) -> str:
-        qw   = [w for w in _tok(question) if len(w) > 3]
-        seen = set()
-        scored = []
-        for t in texts:
-            key = t.lower()[:60]
-            if key in seen:
-                continue
-            seen.add(key)
-            overlap = sum(1 for w in qw if w in t.lower())
-            scored.append((overlap, t))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top    = [t for _, t in scored[:3] if _ > 0]
-        if not top:
-            top = [t for _, t in scored[:2]]
-        result = " ".join(top)
-        if len(result) > 600:
-            cut    = result[:600].rfind(".")
-            result = result[:cut+1] if cut > 100 else result[:600] + "..."
-        return result
-
-
-_mind:  Optional[Mind]        = None
-_synth: Optional[Synthesizer] = None
+_mind: Optional[Mind] = None
 
 def get_mind() -> Mind:
     global _mind
@@ -373,84 +278,192 @@ def get_mind() -> Mind:
         _mind = Mind()
     return _mind
 
-def get_synth() -> Synthesizer:
-    global _synth
-    if _synth is None:
-        _synth = Synthesizer()
-    return _synth
 
+# ─── Sintetizador con Claude API ──────────────────────────────────────────────
+
+def _call_claude(system_prompt: str, messages: List[dict], max_tokens: int = 400) -> str:
+    """Llama a Claude claude-sonnet-4-6 con el contexto dado."""
+    if not ANTHROPIC_API_KEY:
+        return ""
+    try:
+        resp = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": max_tokens,
+                "system": system_prompt,
+                "messages": messages,
+            },
+            timeout=20,
+        )
+        data = resp.json()
+        if "content" in data and data["content"]:
+            return data["content"][0].get("text", "").strip()
+    except Exception as e:
+        print(f"[Mind] Claude API error: {e}")
+    return ""
+
+
+def _synthesize_with_claude(question: str, context_sents: List[str],
+                             conv_history: List[dict],
+                             past_exchanges: List[dict]) -> str:
+    """
+    Usa Claude para generar una respuesta coherente dado:
+    - La pregunta del usuario
+    - Oraciones relevantes recuperadas del indice
+    - Historial de la conversacion actual
+    - Intercambios pasados relevantes
+    """
+    context_block = "\n".join(f"- {s}" for s in context_sents[:8]) if context_sents else "Sin contexto adicional."
+
+    past_block = ""
+    if past_exchanges:
+        past_block = "\nConversaciones previas relevantes:\n"
+        for ex in past_exchanges:
+            past_block += f"  Usuario dijo: {ex['user']}\n  EQM respondio: {ex['bot']}\n"
+
+    system = f"""Sos EQM (El Que Manda), un asistente inteligente creado por Borealis Corporations.
+Respondés en español rioplatense (Argentina), de forma clara, directa y en tus propias palabras.
+Nunca pegás texto crudo de internet. Siempre sintetizás y explicás con coherencia.
+Recordás lo que te dijeron en la conversacion actual y en conversaciones pasadas.
+
+Contexto recuperado de tu base de conocimiento:
+{context_block}
+{past_block}
+Instrucciones:
+- Respondé la pregunta del usuario de forma natural y coherente.
+- Si el contexto no es suficiente, decilo honestamente y ofrecé lo que sabés.
+- Maximo 3 oraciones a menos que la pregunta requiera mas detalle.
+- No repitas la pregunta ni hagas intro innecesaria."""
+
+    messages = []
+    # Incluir historial de conversacion actual
+    for turn in conv_history[-6:]:
+        messages.append({"role": turn["role"], "content": turn["content"]})
+    # Si el ultimo mensaje ya es del usuario no lo duplicamos
+    if not messages or messages[-1]["role"] != "user":
+        messages.append({"role": "user", "content": question})
+
+    return _call_claude(system, messages)
+
+
+# ─── Matematicas fallback ─────────────────────────────────────────────────────
+
+def _math_fallback(question: str) -> Optional[str]:
+    e = re.sub(r"(?i)(cuanto\s+es|calcula|resultado\s+de)", "", question)
+    e = (e.replace("por","*").replace("mas","+").replace("menos","-")
+           .replace("dividido","/").replace("entre","/").replace("^","**"))
+    e = re.sub(r"[^\d\s\+\-\*\/\.\(\)\*]", "", e).strip()
+    if not e or not re.search(r"\d", e) or not re.search(r"[\+\-\*\/]", e):
+        return None
+    try:
+        if re.fullmatch(r"[\d\s\+\-\*\/\.\(\)\*]+", e):
+            r = eval(e)
+            if isinstance(r, float) and r == int(r):
+                r = int(r)
+            return f"El resultado es {r}."
+    except Exception:
+        pass
+    return None
+
+
+# ─── Funcion principal ────────────────────────────────────────────────────────
 
 def think(question: str, auto_learn: bool = True) -> str:
     """
-    Cerebro principal de EQM.
-    1. Matematicas avanzadas y basicas (reasoner.py)
-    2. Busca en indice TF-IDF propio
-    3. Busca en web directamente con la pregunta
-    4. Aprende via learner como ultimo recurso
+    Cerebro principal de EQM v3.
+    1. Matematicas
+    2. Recupera contexto del indice TF-IDF
+    3. Busca en web si no tiene suficiente contexto
+    4. Sintetiza con Claude usando historial + contexto
+    5. Guarda el intercambio para aprender
     """
+    mem   = get_conv_mem()
+    mind  = get_mind()
+
+    # Registrar la pregunta en el historial
+    mem.add_turn("user", question)
+
     # PASO 0: Matematicas
     try:
         from reasoner import solve_advanced_math, solve_basic_math
         adv = solve_advanced_math(question)
         if adv:
+            mem.add_turn("assistant", adv)
             return adv
         basic = solve_basic_math(question)
         if basic:
-            return f"El resultado es {basic}."
+            r = f"El resultado es {basic}."
+            mem.add_turn("assistant", r)
+            return r
     except Exception:
         pass
 
-    mind  = get_mind()
-    synth = get_synth()
+    math_r = _math_fallback(question)
+    if math_r:
+        mem.add_turn("assistant", math_r)
+        return math_r
 
     # PASO 1: Buscar en indice propio
-    results = mind.search(question, top_k=8, min_score=0.15)
-    if results and results[0]["score"] >= 0.15:
-        answer = synth.synthesize(question, results)
-        if answer and len(answer) > 20:
+    results = mind.search(question, top_k=8, min_score=0.12)
+    context_sents = [r["text"] for r in results]
+
+    # PASO 2: Completar con busqueda web si el contexto es pobre
+    if auto_learn and len(context_sents) < 3:
+        try:
+            from web_search import search_all
+            web_results = search_all(question, timeout=10)
+            if web_results:
+                for r in web_results[:5]:
+                    texto = r.get("text", "")
+                    if texto and len(texto) > 50:
+                        mind.learn(texto, question, r.get("source", "web"))
+                # Re-buscar con lo recien aprendido
+                results2 = mind.search(question, top_k=8, min_score=0.10)
+                context_sents = [r["text"] for r in results2]
+        except Exception:
+            pass
+
+    # PASO 3: Buscar en conversaciones pasadas relevantes
+    past = mem.search_learned(question, top_k=3)
+
+    # PASO 4: Sintetizar con Claude
+    if ANTHROPIC_API_KEY:
+        answer = _synthesize_with_claude(
+            question,
+            context_sents,
+            mem.get_history(),
+            past,
+        )
+        if answer and len(answer) > 10:
+            mem.add_turn("assistant", answer)
+            mem.learn_exchange(question, answer)
             return answer
 
-    if not auto_learn:
-        return ""
+    # PASO 5: Fallback sin Claude - learner
+    if auto_learn:
+        try:
+            from learner import get_learner
+            from knowledge_base import get_kb
+            learner  = get_learner()
+            palabras = [w for w in _tok(question) if len(w) > 3]
+            tema     = " ".join(palabras[-4:]) if palabras else question
+            lr       = learner.learn_about_topic(tema)
+            if lr.success:
+                data = get_kb()._get_data()
+                for tkey, tdata in data.get("topics", {}).items():
+                    if any(p in tkey for p in palabras[-2:]):
+                        for entry in tdata.get("entries", []):
+                            mind.learn(entry.get("content", ""), tema, "web")
+                results3 = mind.search(question, top_k=5, min_score=0.10)
+                if results3:
+                    return results3[0]["text"]
+        except Exception:
+            pass
 
-    # PASO 2: Buscar en web con la pregunta completa y aprender
-    try:
-        from web_search import search_all
-        web_results = search_all(question, timeout=10)
-        if web_results:
-            for r in web_results[:5]:
-                texto = r.get("text", "")
-                if texto and len(texto) > 50:
-                    mind.learn(texto, question, r.get("source", "web"))
-            results2 = mind.search(question, top_k=5, min_score=0.10)
-            if results2:
-                answer2 = synth.synthesize(question, results2)
-                if answer2 and len(answer2) > 20:
-                    return answer2
-    except Exception:
-        pass
-
-    # PASO 3: Learner como fallback con tema extraido
-    try:
-        from learner import get_learner
-        from knowledge_base import get_kb
-        learner  = get_learner()
-        palabras = [w for w in _tok(question) if len(w) > 3]
-        tema     = " ".join(palabras[-4:]) if palabras else question
-        lr       = learner.learn_about_topic(tema)
-        if lr.success:
-            data = get_kb()._get_data()
-            for tkey, tdata in data.get("topics", {}).items():
-                if any(p in tkey for p in palabras[-2:]):
-                    for entry in tdata.get("entries", []):
-                        mind.learn(entry.get("content", ""), tema, "web")
-            results3 = mind.search(question, top_k=5, min_score=0.10)
-            if results3:
-                answer3 = synth.synthesize(question, results3)
-                if answer3 and len(answer3) > 20:
-                    return answer3
-    except Exception:
-        pass
-
-    return ""
-
+    return "No encontre informacion sobre ese tema. Podés decirme 'aprendé sobre [tema]' y lo investigo."
