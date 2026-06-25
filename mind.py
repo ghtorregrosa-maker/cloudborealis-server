@@ -244,6 +244,37 @@ def _qtype(question: str) -> str:
 
 
 class Synthesizer:
+    def _ubicacion(self, texts: List[str], question: str) -> str:
+        """Responde preguntas de donde/continente/pais extrayendo la oracion mas directa."""
+        patrones = [
+            r"\bse\s+encuentra\s+en\b",
+            r"\besta\s+(?:situada?|ubicada?|localizada?)\b",
+            r"\bpertenece\s+a\b",
+            r"\bforma\s+parte\s+de\b",
+            r"\bes\s+un\s+pa[ií]s\b",
+            r"\bes\s+una\s+naci[oó]n\b",
+            r"\bcontinente\b",
+            r"\beuropa\b",
+            r"\bsur(?:oeste|este|oeste)?\s+de\s+europa\b",
+            r"\bpen[ií]nsula\s+ib[eé]rica\b",
+        ]
+        # Filtrar oraciones que hablen de ubicacion
+        candidatos = []
+        for t in texts:
+            tl = t.lower()
+            hits = sum(1 for p in patrones if re.search(p, tl))
+            if hits > 0:
+                candidatos.append((hits, t))
+        if candidatos:
+            candidatos.sort(key=lambda x: x[0], reverse=True)
+            best = candidatos[0][1]
+            # Limpiar si es muy larga
+            if len(best) > 250:
+                cut = best[:250].rfind(".")
+                best = best[:cut+1] if cut > 30 else best[:250] + "..."
+            return best
+        return self._general(texts, question)
+
     def synthesize(self, question: str, sents: List[dict]) -> str:
         if not sents:
             return ""
@@ -254,6 +285,15 @@ class Synthesizer:
             r = self._math(question)
             if r:
                 return r
+
+        # Detectar preguntas de ubicacion antes que el tipo generico
+        ql = question.lower()
+        es_ubicacion = any(re.search(p, ql) for p in [
+            r"d[o\u00f3]nde\b", r"en\s+qu[e\u00e9]\s+(pa[i\u00ed]s|continente|lugar|ciudad|region)\b",
+            r"qu[e\u00e9]\s+continente\b", r"a\s+qu[e\u00e9]\s+continente\b",
+        ])
+        if es_ubicacion:
+            return self._ubicacion(texts, question)
 
         if   qt == "cantidad":   return self._qty(texts, question)
         elif qt == "definicion": return self._define(texts, question)
@@ -293,14 +333,24 @@ class Synthesizer:
         return self._general(texts, q)
 
     def _define(self, texts: List[str], q: str) -> str:
+        # Extraer el tema de la pregunta (lo que viene despues de "que es")
+        tema_match = re.search(r"qu[e]\s+(?:es|son)\s+(.+)", q.lower())
+        tema = tema_match.group(1).strip() if tema_match else ""
         pats = [r"\bes\s+una?\b", r"\bes\s+el\b", r"\bson\s+\w+\s+que\b",
                 r"\bse\s+define\b", r"\bconsiste\b", r"\bse\s+trata\b",
-                r"\bpermite\b", r"\bfue\s+creado\b", r"\bdesarrollado\b"]
+                r"\bpermite\b", r"\bfue\s+creado\b", r"\bdesarrollado\b",
+                r"\blenguaje\b", r"\bherramienta\b", r"\bsistema\b",
+                r"\bplataforma\b", r"\btecnolog[ií]a\b"]
+        candidatos = []
         for t in texts:
             tl = t.lower()
             if any(re.search(p, tl) for p in pats):
-                return t
-        # Fallback: la oracion con mas overlap con la pregunta
+                # Preferir oraciones que mencionen el tema
+                score = 2 if tema and tema[:6] in tl else 1
+                candidatos.append((score, t))
+        if candidatos:
+            candidatos.sort(key=lambda x: x[0], reverse=True)
+            return candidatos[0][1]
         return self._general(texts, q)
 
     def _process(self, texts: List[str]) -> str:
@@ -343,7 +393,7 @@ class Synthesizer:
         return texts[0]
 
     def _general(self, texts: List[str], question: str) -> str:
-        qw   = [w for w in _tok(question) if len(w) > 3]
+        qw = [w for w in _tok(question) if len(w) > 3]
         seen = set()
         scored = []
         for t in texts:
@@ -352,15 +402,25 @@ class Synthesizer:
                 continue
             seen.add(key)
             overlap = sum(1 for w in qw if w in t.lower())
-            scored.append((overlap, t))
+            # Bonus si la oracion tiene estructura de respuesta directa
+            bonus = 0
+            tl = t.lower()
+            if re.search(r"\bes\s+una?\b|\bes\s+el\b|\bse\s+encuentra\b|\bpertenece\b|\bforma\s+parte\b|\bubicad[ao]\b", tl):
+                bonus += 2
+            if re.search(r"\bcontinente\b|\beuropa\b|\basia\b|\bamerica\b|\bafrica\b|\bocean[ií]a\b", tl):
+                bonus += 2
+            scored.append((overlap + bonus, t))
         scored.sort(key=lambda x: x[0], reverse=True)
-        top    = [t for _, t in scored[:3] if _ > 0]
-        if not top:
-            top = [t for _, t in scored[:2]]
-        result = " ".join(top)
-        if len(result) > 600:
-            cut    = result[:600].rfind(".")
-            result = result[:cut+1] if cut > 100 else result[:600] + "..."
+        # Tomar solo la mejor oracion que tenga overlap real
+        best = [t for sc, t in scored if sc > 0]
+        if not best:
+            best = [t for _, t in scored[:1]]
+        # Devolver solo la primera oracion util, no concatenar basura
+        result = best[0] if best else ""
+        # Limpiar: si la oracion es muy larga, cortar en el primer punto
+        if len(result) > 300:
+            cut = result[:300].rfind(".")
+            result = result[:cut+1] if cut > 50 else result[:300] + "..."
         return result
 
 
@@ -453,4 +513,5 @@ def think(question: str, auto_learn: bool = True) -> str:
         pass
 
     return ""
+
 
