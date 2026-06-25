@@ -234,3 +234,16 @@ def get_youtube_info(url: str, timeout: int = 10) -> Optional[Dict]:
         return None
 
 
+
+def search_all(query: str, timeout: int = 10) -> List[Dict]:
+    """Busca en DuckDuckGo y Wikipedia y devuelve resultados combinados."""
+    results = []
+    try:
+        results += search_duckduckgo(query, timeout=timeout)
+    except Exception:
+        pass
+    try:
+        results += search_wikipedia(query, timeout=timeout)
+    except Exception:
+        pass
+    return results
