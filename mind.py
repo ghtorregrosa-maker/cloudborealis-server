@@ -384,16 +384,20 @@ def think(question: str, auto_learn: bool = True) -> str:
     """
     Punto de entrada principal del cerebro de EQM.
     1. Intenta resolver matematicas avanzadas (reasoner.py)
-    2. Busca en el indice propio con filtro de dominio y score >= 0.15
-    3. Si no encuentra, aprende del tema y reintenta
-    4. Devuelve string vacio si no tiene respuesta confiable
+    2. Intenta resolver matematicas basicas (reasoner.py)
+    3. Busca en el indice propio con filtro de dominio y score >= 0.15
+    4. Si no encuentra, aprende del tema y reintenta
+    5. Devuelve string vacio si no tiene respuesta confiable
     """
-    # PASO 0: Matematicas avanzadas via reasoner (raiz cubica, trig, etc)
+    # PASO 0: Matematicas via reasoner (avanzadas y basicas)
     try:
         from reasoner import solve_advanced_math, solve_basic_math
         adv = solve_advanced_math(question)
         if adv:
             return adv
+        basic = solve_basic_math(question)
+        if basic:
+            return f"El resultado es {basic}."
     except Exception:
         pass
 
@@ -437,4 +441,5 @@ def think(question: str, auto_learn: bool = True) -> str:
         pass
 
     return ""
+
 
