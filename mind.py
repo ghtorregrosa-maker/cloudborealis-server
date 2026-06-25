@@ -440,13 +440,55 @@ def get_synth() -> Synthesizer:
     return _synth
 
 
+def _ask_groq(question: str, context: str = "") -> str:
+    """Llama a Groq con llama3 para sintetizar una respuesta."""
+    import os, requests as req
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key:
+        return ""
+    system = """Sos EQM (El Que Manda), un asistente creado por Borealis Corporations.
+Respondés en español rioplatense, de forma directa y clara.
+Usas el contexto provisto para responder. Si no alcanza, respondés con lo que sabes.
+Nunca decís que sos una IA de Groq ni mencionas el modelo. Sos EQM, punto.
+Respuesta corta y precisa, maximo 3 oraciones salvo que te pidan mas detalle."""
+
+    user_msg = question
+    if context:
+        user_msg = f"Contexto:\n{context}\n\nPregunta: {question}"
+
+    try:
+        resp = req.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama3-8b-8192",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user_msg},
+                ],
+                "max_tokens": 300,
+                "temperature": 0.4,
+            },
+            timeout=20,
+        )
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"[Mind] Groq error: {e}")
+        return ""
+
+
 def think(question: str, auto_learn: bool = True) -> str:
     """
-    Cerebro principal de EQM.
-    1. Matematicas avanzadas y basicas (reasoner.py)
+    Cerebro principal de EQM v3 con Groq.
+    1. Matematicas
     2. Busca en indice TF-IDF propio
-    3. Busca en web directamente con la pregunta
-    4. Aprende via learner como ultimo recurso
+    3. Busca en web y aprende
+    4. Groq sintetiza con el contexto encontrado
+    5. Si no hay contexto, Groq responde directo
     """
     # PASO 0: Matematicas
     try:
@@ -464,55 +506,66 @@ def think(question: str, auto_learn: bool = True) -> str:
     synth = get_synth()
 
     # PASO 1: Buscar en indice propio
-    results = mind.search(question, top_k=8, min_score=0.15)
-    if results and results[0]["score"] >= 0.15:
-        answer = synth.synthesize(question, results)
-        if answer and len(answer) > 20:
-            return answer
+    context_sents = []
+    results = mind.search(question, top_k=6, min_score=0.15)
+    if results:
+        context_sents = [r["text"] for r in results]
 
-    if not auto_learn:
-        return ""
+    # PASO 2: Buscar en web si el contexto es pobre
+    if auto_learn and len(context_sents) < 3:
+        try:
+            from web_search import search_all
+            web_results = search_all(question, timeout=10)
+            if web_results:
+                for r in web_results[:5]:
+                    texto = r.get("text", "")
+                    if texto and len(texto) > 50:
+                        mind.learn(texto, question, r.get("source", "web"))
+                results2 = mind.search(question, top_k=6, min_score=0.10)
+                if results2:
+                    context_sents = [r["text"] for r in results2]
+        except Exception:
+            pass
 
-    # PASO 2: Buscar en web con la pregunta completa y aprender
-    try:
-        from web_search import search_all
-        web_results = search_all(question, timeout=10)
-        if web_results:
-            for r in web_results[:5]:
-                texto = r.get("text", "")
-                if texto and len(texto) > 50:
-                    mind.learn(texto, question, r.get("source", "web"))
-            results2 = mind.search(question, top_k=5, min_score=0.10)
-            if results2:
-                answer2 = synth.synthesize(question, results2)
-                if answer2 and len(answer2) > 20:
-                    return answer2
-    except Exception:
-        pass
+    # PASO 3: Groq sintetiza con el contexto
+    context_str = "\n".join(f"- {s}" for s in context_sents[:6])
+    answer = _ask_groq(question, context_str)
+    if answer and len(answer) > 10:
+        return answer
 
-    # PASO 3: Learner como fallback con tema extraido
-    try:
-        from learner import get_learner
-        from knowledge_base import get_kb
-        learner  = get_learner()
-        palabras = [w for w in _tok(question) if len(w) > 3]
-        tema     = " ".join(palabras[-4:]) if palabras else question
-        lr       = learner.learn_about_topic(tema)
-        if lr.success:
-            data = get_kb()._get_data()
-            for tkey, tdata in data.get("topics", {}).items():
-                if any(p in tkey for p in palabras[-2:]):
-                    for entry in tdata.get("entries", []):
-                        mind.learn(entry.get("content", ""), tema, "web")
-            results3 = mind.search(question, top_k=5, min_score=0.10)
-            if results3:
-                answer3 = synth.synthesize(question, results3)
-                if answer3 and len(answer3) > 20:
-                    return answer3
-    except Exception:
-        pass
+    # PASO 4: Fallback al synthesizer propio si Groq falla
+    if context_sents:
+        sents_dicts = [{"text": s, "id": i, "score": 0.5}
+                       for i, s in enumerate(context_sents)]
+        answer2 = synth.synthesize(question, sents_dicts)
+        if answer2 and len(answer2) > 20:
+            return answer2
 
-    return ""
+    # PASO 5: Learner como ultimo recurso
+    if auto_learn:
+        try:
+            from learner import get_learner
+            from knowledge_base import get_kb
+            learner  = get_learner()
+            palabras = [w for w in _tok(question) if len(w) > 3]
+            tema     = " ".join(palabras[-4:]) if palabras else question
+            lr       = learner.learn_about_topic(tema)
+            if lr.success:
+                data = get_kb()._get_data()
+                for tkey, tdata in data.get("topics", {}).items():
+                    if any(p in tkey for p in palabras[-2:]):
+                        for entry in tdata.get("entries", []):
+                            mind.learn(entry.get("content", ""), tema, "web")
+                results3 = mind.search(question, top_k=5, min_score=0.10)
+                if results3:
+                    answer3 = synth.synthesize(question, results3)
+                    if answer3 and len(answer3) > 20:
+                        return answer3
+        except Exception:
+            pass
+
+    return "No encontre informacion sobre ese tema. Podés decirme 'aprendé sobre [tema]' y lo investigo."
+
 
 
 
