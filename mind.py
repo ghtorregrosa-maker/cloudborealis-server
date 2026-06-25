@@ -382,14 +382,13 @@ def get_synth() -> Synthesizer:
 
 def think(question: str, auto_learn: bool = True) -> str:
     """
-    Punto de entrada principal del cerebro de EQM.
-    1. Intenta resolver matematicas avanzadas (reasoner.py)
-    2. Intenta resolver matematicas basicas (reasoner.py)
-    3. Busca en el indice propio con filtro de dominio y score >= 0.15
-    4. Si no encuentra, aprende del tema y reintenta
-    5. Devuelve string vacio si no tiene respuesta confiable
+    Cerebro principal de EQM.
+    1. Matematicas avanzadas y basicas (reasoner.py)
+    2. Busca en indice TF-IDF propio
+    3. Busca en web directamente con la pregunta
+    4. Aprende via learner como ultimo recurso
     """
-    # PASO 0: Matematicas via reasoner (avanzadas y basicas)
+    # PASO 0: Matematicas
     try:
         from reasoner import solve_advanced_math, solve_basic_math
         adv = solve_advanced_math(question)
@@ -404,7 +403,7 @@ def think(question: str, auto_learn: bool = True) -> str:
     mind  = get_mind()
     synth = get_synth()
 
-    # PASO 1: Busqueda con score minimo elevado para evitar basura
+    # PASO 1: Buscar en indice propio
     results = mind.search(question, top_k=8, min_score=0.15)
     if results and results[0]["score"] >= 0.15:
         answer = synth.synthesize(question, results)
@@ -414,33 +413,44 @@ def think(question: str, auto_learn: bool = True) -> str:
     if not auto_learn:
         return ""
 
-    # PASO 2: Aprender y reintentar
+    # PASO 2: Buscar en web con la pregunta completa y aprender
     try:
-        from learner import get_learner
-        learner = get_learner()
-        lr      = learner.learn_about_topic(question)
-
-        if lr.success:
-            try:
-                from knowledge_base import get_kb
-                data      = get_kb()._get_data()
-                topic_key = question.lower().replace(" ", "_")[:40]
-                topic_data = data.get("topics", {}).get(topic_key, {})
-                for entry in topic_data.get("entries", []):
-                    mind.learn(entry.get("content", ""), question, "web")
-            except Exception as ke:
-                pass
-
-            results2 = mind.search(question, top_k=5, min_score=0.12)
-            if results2 and results2[0]["score"] >= 0.12:
+        from web_search import search_all
+        web_results = search_all(question, timeout=10)
+        if web_results:
+            for r in web_results[:5]:
+                texto = r.get("text", "")
+                if texto and len(texto) > 50:
+                    mind.learn(texto, question, r.get("source", "web"))
+            results2 = mind.search(question, top_k=5, min_score=0.10)
+            if results2:
                 answer2 = synth.synthesize(question, results2)
                 if answer2 and len(answer2) > 20:
                     return answer2
+    except Exception:
+        pass
 
-    except Exception as le:
+    # PASO 3: Learner como fallback con tema extraido
+    try:
+        from learner import get_learner
+        from knowledge_base import get_kb
+        learner  = get_learner()
+        palabras = [w for w in _tok(question) if len(w) > 3]
+        tema     = " ".join(palabras[-4:]) if palabras else question
+        lr       = learner.learn_about_topic(tema)
+        if lr.success:
+            data = get_kb()._get_data()
+            for tkey, tdata in data.get("topics", {}).items():
+                if any(p in tkey for p in palabras[-2:]):
+                    for entry in tdata.get("entries", []):
+                        mind.learn(entry.get("content", ""), tema, "web")
+            results3 = mind.search(question, top_k=5, min_score=0.10)
+            if results3:
+                answer3 = synth.synthesize(question, results3)
+                if answer3 and len(answer3) > 20:
+                    return answer3
+    except Exception:
         pass
 
     return ""
-
-
 
