@@ -383,14 +383,24 @@ def get_synth() -> Synthesizer:
 def think(question: str, auto_learn: bool = True) -> str:
     """
     Punto de entrada principal del cerebro de EQM.
-    1. Busca en el indice propio con filtro de dominio y score >= 0.15
-    2. Si no encuentra, aprende del tema y reintenta
-    3. Devuelve string vacio si no tiene respuesta confiable
+    1. Intenta resolver matematicas avanzadas (reasoner.py)
+    2. Busca en el indice propio con filtro de dominio y score >= 0.15
+    3. Si no encuentra, aprende del tema y reintenta
+    4. Devuelve string vacio si no tiene respuesta confiable
     """
+    # PASO 0: Matematicas avanzadas via reasoner (raiz cubica, trig, etc)
+    try:
+        from reasoner import solve_advanced_math, solve_basic_math
+        adv = solve_advanced_math(question)
+        if adv:
+            return adv
+    except Exception:
+        pass
+
     mind  = get_mind()
     synth = get_synth()
 
-    # Busqueda con score minimo elevado para evitar basura
+    # PASO 1: Busqueda con score minimo elevado para evitar basura
     results = mind.search(question, top_k=8, min_score=0.15)
     if results and results[0]["score"] >= 0.15:
         answer = synth.synthesize(question, results)
@@ -400,7 +410,7 @@ def think(question: str, auto_learn: bool = True) -> str:
     if not auto_learn:
         return ""
 
-    # Aprender y reintentar
+    # PASO 2: Aprender y reintentar
     try:
         from learner import get_learner
         learner = get_learner()
@@ -414,7 +424,7 @@ def think(question: str, auto_learn: bool = True) -> str:
                 topic_data = data.get("topics", {}).get(topic_key, {})
                 for entry in topic_data.get("entries", []):
                     mind.learn(entry.get("content", ""), question, "web")
-            except Exception:
+            except Exception as ke:
                 pass
 
             results2 = mind.search(question, top_k=5, min_score=0.12)
@@ -423,7 +433,8 @@ def think(question: str, auto_learn: bool = True) -> str:
                 if answer2 and len(answer2) > 20:
                     return answer2
 
-    except Exception:
+    except Exception as le:
         pass
 
     return ""
+
