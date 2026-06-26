@@ -677,6 +677,19 @@ async def aprender_carrera(req: CarreraRequest,
         "errores": errores
     }
 
+@app.delete("/api/mind/reset")
+async def reset_mind_index(auth=Depends(verify_key)):
+    """Limpia el indice TF-IDF para que EQM aprenda desde cero."""
+    try:
+        from mind import get_mind
+        m = get_mind()
+        m._data = {"sents": [], "topics": {}}
+        m._save()
+        m._rebuild()
+        return {"ok": True, "message": "Indice reseteado"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "EQM - El Que Manda",
@@ -707,6 +720,7 @@ def start():
 
 if __name__ == "__main__":
     start()
+
 
 
 
