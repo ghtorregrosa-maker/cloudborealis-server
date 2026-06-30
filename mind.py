@@ -1,4 +1,5 @@
-﻿"""
+﻿# EQM Mind v3 - Groq enabled
+"""
 mind.py - Cerebro real de EQM.
 Lee, comprende, razona y responde con sus propias palabras.
 Sin API externa. v2 - filtros de relevancia corregidos.
@@ -561,6 +562,7 @@ def think(question: str, auto_learn: bool = True) -> str:
             pass
 
     return "No encontre informacion sobre ese tema. Podés decirme 'aprendé sobre [tema]' y lo investigo."
+
 
 
 
