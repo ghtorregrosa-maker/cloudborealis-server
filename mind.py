@@ -104,11 +104,7 @@ class Mind:
         print(f"[Mind] Cerebro activo: {n} ideas indexadas.")
 
     def _load(self) -> dict:
-        if INDEX_FILE.exists():
-            try:
-                return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+        # Siempre arrancar con indice limpio en Render (filesystem efimero)
         return {"sents": [], "topics": {}}
 
     def _save(self) -> None:
@@ -565,6 +561,7 @@ def think(question: str, auto_learn: bool = True) -> str:
             pass
 
     return "No encontre informacion sobre ese tema. Podés decirme 'aprendé sobre [tema]' y lo investigo."
+
 
 
 
