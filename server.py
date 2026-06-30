@@ -678,7 +678,7 @@ async def aprender_carrera(req: CarreraRequest,
     }
 
 @app.delete("/api/mind/reset")
-async def reset_mind_index(auth=Depends(verify_key)):
+async def reset_mind_index():
     """Limpia el indice TF-IDF para que EQM aprenda desde cero."""
     try:
         from mind import get_mind
@@ -720,6 +720,7 @@ def start():
 
 if __name__ == "__main__":
     start()
+
 
 
 
