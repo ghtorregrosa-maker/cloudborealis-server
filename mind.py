@@ -4,7 +4,8 @@ Lee, comprende, razona y responde con sus propias palabras.
 Sin API externa. v2 - filtros de relevancia corregidos.
 """
 from __future__ import annotations
-import re, math, json, threading, unicodedata
+import re, math, json, threading, unicodedata, os
+import requests as req
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -442,7 +443,6 @@ def get_synth() -> Synthesizer:
 
 def _ask_groq(question: str, context: str = "") -> str:
     """Llama a Groq con llama3 para sintetizar una respuesta."""
-    import os, requests as req
     api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         return ""
@@ -565,6 +565,7 @@ def think(question: str, auto_learn: bool = True) -> str:
             pass
 
     return "No encontre informacion sobre ese tema. Podés decirme 'aprendé sobre [tema]' y lo investigo."
+
 
 
 
