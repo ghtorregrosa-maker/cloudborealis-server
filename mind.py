@@ -1,7 +1,7 @@
-﻿"""
+"""
 mind.py - Cerebro real de EQM.
 Lee, comprende, razona y responde con sus propias palabras.
-Sin API externa. v2 - filtros de relevancia corregidos.
+Sin API externa. v3 - conectado con reasoner.py para sintesis y matematicas.
 """
 from __future__ import annotations
 import re, math, json, threading, unicodedata
@@ -27,7 +27,6 @@ STOPWORDS = {
     "after","over","new","said","also","any","such","only","same","most",
 }
 
-# Palabras de contexto que ayudan a distinguir dominios
 DOMAIN_HINTS = {
     "python_lang": {"python","lenguaje","programacion","codigo","script","funcion",
                     "clase","modulo","libreria","sintaxis","variable","bucle","lista",
@@ -45,14 +44,17 @@ def _norm(text: str) -> str:
     )
 
 def _tok(text: str) -> List[str]:
-    """Tokeniza texto normalizando tildes y filtrando stopwords."""
+    """
+    Tokeniza texto normalizando tildes y filtrando stopwords.
+    Minimo 4 caracteres para evitar coincidencias arbitrarias
+    de 3 letras (ej: sdf coincidiendo con SDF-1 por azar).
+    """
     text_norm = _norm(text)
-    words = re.findall(r"\b[a-z]{3,}\b", text_norm)
+    words = re.findall(r"\b[a-z]{4,}\b", text_norm)
     return [w for w in words if w not in STOPWORDS]
 
 def _sentences(text: str) -> List[str]:
     """Extrae oraciones limpias de un texto."""
-    # Limpiar HTML residual
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"&\w+;", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -60,7 +62,6 @@ def _sentences(text: str) -> List[str]:
     result = []
     for s in raw:
         s = s.strip()
-        # Descartar oraciones que son basura tipica de scraping
         if len(s) < 30:
             continue
         if s.lower().startswith(("siguientes","categorias","referencias",
@@ -85,7 +86,6 @@ def _sent_in_domain(sent: str, domain: Optional[str]) -> bool:
     if domain is None:
         return True
     stoks = set(_tok(sent))
-    # Si la oracion tiene palabras del dominio opuesto, descartarla
     for d, hints in DOMAIN_HINTS.items():
         if d != domain and len(stoks & hints) >= 2:
             return False
@@ -188,13 +188,16 @@ class Mind:
             return []
         scored = []
         for d in self._data["sents"]:
-            # Filtro de dominio: descartar oraciones del dominio opuesto
             if not _sent_in_domain(d["text"], domain):
                 continue
             s = self._cosine(d["id"], qt)
             if s >= min_score:
                 scored.append({**d, "score": round(s, 4)})
         scored.sort(key=lambda x: x["score"], reverse=True)
+
+        if len(qt) == 1 and scored:
+            scored = [s for s in scored if s["score"] >= 0.35]
+
         return scored[:top_k]
 
     def knows(self, topic: str) -> bool:
@@ -211,161 +214,7 @@ class Mind:
         }
 
 
-QTYPES = {
-    "cantidad": [
-        r"cu[a]nto[as]?\b", r"qu[e]\s+cantidad\b",
-        r"cu[a]ntos?\s+\w+\s+(hay|tiene|existen|son)\b",
-        r"n[u]mero\s+de\b",
-    ],
-    "definicion": [
-        r"qu[e]\s+es\b", r"qu[e]\s+son\b",
-        r"defin[ei]\w+\b", r"significa\b",
-        r"qu[e]\s+significa\b", r"concepto\s+de\b",
-    ],
-    "como": [
-        r"c[o]mo\s+(se\s+)?(hace|funciona|usar|instalar|crear|trabaja)\b",
-        r"de\s+qu[e]\s+(forma|manera)\b",
-        r"pasos\s+para\b",
-    ],
-    "quien":    [r"qui[e]n\s+(es|fue|cre[o]|fund[o])\b", r"qui[e]n\b"],
-    "cuando":   [r"cu[a]ndo\b", r"en\s+qu[e]\s+a[n]o\b", r"qu[e]\s+a[n]o\b"],
-    "donde":    [r"d[o]nde\b", r"en\s+qu[e]\s+(pa[i]s|lugar|ciudad)\b"],
-    "lista":    [r"cu[a]les\s+son\b", r"qu[e]\s+tipos\b", r"ejemplos\s+de\b"],
-    "por_que":  [r"por\s+qu[e]\b", r"raz[o]n\s+(de|por)\b"],
-    "calculo":  [r"\d+\s*[\+\-\*\/]\s*\d+", r"cuanto\s+es\s+\d+", r"calcula\b"],
-}
-
-def _qtype(question: str) -> str:
-    q = question.lower()
-    for t, pats in QTYPES.items():
-        if any(re.search(p, q) for p in pats):
-            return t
-    return "general"
-
-
-class Synthesizer:
-    def synthesize(self, question: str, sents: List[dict]) -> str:
-        if not sents:
-            return ""
-        qt    = _qtype(question)
-        texts = [s["text"] for s in sents]
-
-        if qt == "calculo":
-            r = self._math(question)
-            if r:
-                return r
-
-        if   qt == "cantidad":   return self._qty(texts, question)
-        elif qt == "definicion": return self._define(texts, question)
-        elif qt == "como":       return self._process(texts)
-        elif qt == "quien":      return self._who(texts)
-        elif qt == "cuando":     return self._when(texts)
-        elif qt == "lista":      return self._list(texts)
-        elif qt == "por_que":    return self._reason(texts)
-        else:                    return self._general(texts, question)
-
-    def _math(self, expr: str) -> Optional[str]:
-        e = re.sub(r"(?i)(cuanto\s+es|calcula|resultado\s+de)", "", expr)
-        e = (e.replace("por","*").replace("mas","+").replace("menos","-")
-               .replace("dividido","/").replace("entre","/").replace("^","**"))
-        e = re.sub(r"[^\d\s\+\-\*\/\.\(\)\*]", "", e).strip()
-        if not e or not re.search(r"\d", e) or not re.search(r"[\+\-\*\/]", e):
-            return None
-        try:
-            if re.fullmatch(r"[\d\s\+\-\*\/\.\(\)\*]+", e):
-                r = eval(e)
-                if isinstance(r, float) and r == int(r):
-                    r = int(r)
-                return f"El resultado es {r}."
-        except Exception:
-            pass
-        return None
-
-    def _qty(self, texts: List[str], q: str) -> str:
-        qw = [w for w in q.lower().split() if len(w) > 3]
-        for t in texts:
-            if re.search(r"\b\d+\b", t):
-                if sum(1 for w in qw if w in t.lower()) >= 1:
-                    return t
-        for t in texts:
-            if re.search(r"\b\d+\b", t):
-                return t
-        return self._general(texts, q)
-
-    def _define(self, texts: List[str], q: str) -> str:
-        pats = [r"\bes\s+una?\b", r"\bes\s+el\b", r"\bson\s+\w+\s+que\b",
-                r"\bse\s+define\b", r"\bconsiste\b", r"\bse\s+trata\b",
-                r"\bpermite\b", r"\bfue\s+creado\b", r"\bdesarrollado\b"]
-        for t in texts:
-            tl = t.lower()
-            if any(re.search(p, tl) for p in pats):
-                return t
-        # Fallback: la oracion con mas overlap con la pregunta
-        return self._general(texts, q)
-
-    def _process(self, texts: List[str]) -> str:
-        kw = ["primero","luego","despues","paso","para","mediante",
-              "usando","hay que","es necesario","se puede","se debe",
-              "first","then","step","using","install","run","execute"]
-        result = [t for t in texts if any(k in t.lower() for k in kw)][:3]
-        return ". ".join(result) if result else ". ".join(texts[:3])
-
-    def _who(self, texts: List[str]) -> str:
-        pat = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
-        for t in texts:
-            if pat.search(t):
-                return t
-        return texts[0]
-
-    def _when(self, texts: List[str]) -> str:
-        pat = re.compile(
-            r"\b(\d{4}|\d{1,2}\s+de\s+\w+|siglo\s+[XVI]+|en\s+los\s+a[n]os?)\b",
-            re.IGNORECASE)
-        for t in texts:
-            if pat.search(t):
-                return t
-        return texts[0]
-
-    def _list(self, texts: List[str]) -> str:
-        kw = ["incluye","comprende","son","constan","estan","destacan",
-              "forman","entre","como","tales","ejemplo"]
-        for t in texts:
-            if any(k in t.lower() for k in kw):
-                return t
-        return ". ".join(texts[:3])
-
-    def _reason(self, texts: List[str]) -> str:
-        kw = ["porque","debido","ya que","puesto que","dado que","se debe a",
-              "because","since","therefore","thus"]
-        for t in texts:
-            if any(k in t.lower() for k in kw):
-                return t
-        return texts[0]
-
-    def _general(self, texts: List[str], question: str) -> str:
-        qw   = [w for w in _tok(question) if len(w) > 3]
-        seen = set()
-        scored = []
-        for t in texts:
-            key = t.lower()[:60]
-            if key in seen:
-                continue
-            seen.add(key)
-            overlap = sum(1 for w in qw if w in t.lower())
-            scored.append((overlap, t))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top    = [t for _, t in scored[:3] if _ > 0]
-        if not top:
-            top = [t for _, t in scored[:2]]
-        result = " ".join(top)
-        if len(result) > 600:
-            cut    = result[:600].rfind(".")
-            result = result[:cut+1] if cut > 100 else result[:600] + "..."
-        return result
-
-
-_mind:  Optional[Mind]        = None
-_synth: Optional[Synthesizer] = None
+_mind: Optional[Mind] = None
 
 def get_mind() -> Mind:
     global _mind
@@ -373,34 +222,61 @@ def get_mind() -> Mind:
         _mind = Mind()
     return _mind
 
-def get_synth() -> Synthesizer:
-    global _synth
-    if _synth is None:
-        _synth = Synthesizer()
-    return _synth
+
+def _adapt_for_reasoner(results: List[dict]) -> List[dict]:
+    """Convierte resultados de Mind (clave text) al formato de reasoner.py (clave content)."""
+    return [
+        {
+            "content": r.get("text", ""),
+            "topic":   r.get("topic", ""),
+            "source":  r.get("source", ""),
+            "score":   r.get("score", 0),
+        }
+        for r in results
+    ]
 
 
 def think(question: str, auto_learn: bool = True) -> str:
     """
     Punto de entrada principal del cerebro de EQM.
-    1. Busca en el indice propio con filtro de dominio y score >= 0.15
-    2. Si no encuentra, aprende del tema y reintenta
-    3. Devuelve string vacio si no tiene respuesta confiable
+    1. Resuelve matematicas primero, antes de tocar la KB.
+    2. Busca en el indice TF-IDF propio.
+    3. Delega la sintesis de respuesta a reasoner.py.
+    4. Si no sabe, aprende y reintenta.
     """
-    mind  = get_mind()
-    synth = get_synth()
+    from reasoner import (
+        detect_question_type,
+        solve_basic_math,
+        solve_advanced_math,
+        reason_with_fallback,
+    )
 
-    # Busqueda con score minimo elevado para evitar basura
+    qtype = detect_question_type(question)
+
+    if qtype in ("calculo", "calculo_avanzado"):
+        basic = solve_basic_math(question)
+        if basic:
+            return f"El resultado es {basic}."
+        adv = solve_advanced_math(question)
+        if adv:
+            return adv
+
+    adv_attempt = solve_advanced_math(question)
+    if adv_attempt:
+        return adv_attempt
+
+    mind    = get_mind()
     results = mind.search(question, top_k=8, min_score=0.15)
+
     if results and results[0]["score"] >= 0.15:
-        answer = synth.synthesize(question, results)
+        kb_adapted = _adapt_for_reasoner(results)
+        answer = reason_with_fallback(question, kb_adapted)
         if answer and len(answer) > 20:
             return answer
 
     if not auto_learn:
         return ""
 
-    # Aprender y reintentar
     try:
         from learner import get_learner
         learner = get_learner()
@@ -419,7 +295,8 @@ def think(question: str, auto_learn: bool = True) -> str:
 
             results2 = mind.search(question, top_k=5, min_score=0.12)
             if results2 and results2[0]["score"] >= 0.12:
-                answer2 = synth.synthesize(question, results2)
+                kb_adapted2 = _adapt_for_reasoner(results2)
+                answer2 = reason_with_fallback(question, kb_adapted2)
                 if answer2 and len(answer2) > 20:
                     return answer2
 
