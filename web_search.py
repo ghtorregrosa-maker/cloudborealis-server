@@ -233,34 +233,30 @@ def get_youtube_info(url: str, timeout: int = 10) -> Optional[Dict]:
         print(f"[WebSearch] YouTube error: {e}")
         return None
 
+
+
 def search_all(query: str, timeout: int = 10) -> List[Dict]:
-    """
-    Busca en todas las fuentes en orden de confiabilidad.
-    Prioridad: MDN > StackOverflow > freeCodeCamp > DuckDuckGo > Wikipedia
-    """
+    """Busca en DuckDuckGo y Wikipedia y devuelve resultados combinados."""
     results = []
+    try:
+        results += search_duckduckgo(query, timeout=timeout)
+    except Exception:
+        pass
+    try:
+        results += search_wikipedia(query, timeout=timeout)
+    except Exception:
+        pass
+    return results
 
-    # 1. MDN (documentacion web oficial)
-    mdn = search_mdn(query, timeout)
-    results.extend(mdn)
-
-    # 2. StackOverflow (respuestas verificadas con votos)
-    so = search_stackoverflow(query, timeout)
-    results.extend(so)
-
-    # 3. freeCodeCamp (educacion verificada)
-    fcc = search_freecodecamp(query, timeout)
-    results.extend(fcc)
-
-    # 4. DuckDuckGo (busqueda general)
-    ddg = search_duckduckgo(query, timeout)
-    results.extend(ddg)
-
-    # 5. Wikipedia solo si no hay suficiente info
-    if len(results) < 2:
-        wiki = search_wikipedia(query, timeout)
-        results.extend(wiki)
-
-    # Ordenar por longitud de texto (mas contenido = mas util)
-    results.sort(key=lambda x: len(x.get("text", "")), reverse=True)
+def search_all(query: str, timeout: int = 10) -> List[Dict]:
+    """Busca en DuckDuckGo y Wikipedia y devuelve resultados combinados."""
+    results = []
+    try:
+        results += search_duckduckgo(query, timeout=timeout)
+    except Exception:
+        pass
+    try:
+        results += search_wikipedia(query, timeout=timeout)
+    except Exception:
+        pass
     return results
