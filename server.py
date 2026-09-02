@@ -1,8 +1,11 @@
-﻿"""
+"""
 server.py - Backend EQM con auth, sesiones, analytics, monitor proactivo y skills dinamicas.
 Borealis Corporations - El Que Manda.
 """
 from __future__ import annotations
+
+import os
+import secrets
 import time, pathlib, json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -40,9 +43,36 @@ async def force_utf8(request, call_next):
 memory    = get_memory()
 evaluator = Evaluator(memory)
 listener  = Listener()
-planner   = Planner(evaluator)
+planner   = Planner()
 executor  = Executor()
 auth      = get_auth()
+# ============================================================
+# BOOTSTRAP DE ADMINISTRADOR EQM
+# ============================================================
+
+@app.on_event("startup")
+async def bootstrap_admin():
+    try:
+        result = auth.ensure_admin(
+            username="admin_eqm",
+            password=os.getenv(
+                "EQM_ADMIN_PASSWORD",
+                "AdminPassword123!"
+            ),
+            email=os.getenv(
+                "EQM_ADMIN_EMAIL",
+                ""
+            ),
+        )
+
+        if result.get("created"):
+            print("[Bootstrap] admin_eqm creado correctamente.")
+        else:
+            print("[Bootstrap] admin_eqm ya existe.")
+
+    except Exception as e:
+        print(f"[Bootstrap] ERROR creando admin_eqm: {e}")
+
 analytics = get_analytics()
 monitor   = get_monitor()
 monitor.start()
@@ -102,9 +132,94 @@ class AlertTopicRequest(BaseModel):
     topic: str
 
 def verify_key(x_api_key=None):
-    if x_api_key != config.API_SECRET_KEY:
-        raise HTTPException(status_code=401, detail="API Key invalida.")
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="API Key requerida."
+        )
 
+    if not config.API_SECRET_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="BOREALIS_KEY no configurada en el servidor."
+        )
+
+    if not secrets.compare_digest(
+        str(x_api_key),
+        str(config.API_SECRET_KEY)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="API Key invalida."
+        )
+
+    return True
+
+
+def get_user_from_token(token):
+    if not token:
+        return None
+
+    return auth.verify_token(token)
+
+
+def extract_bearer_token(authorization):
+    if not authorization:
+        return None
+
+    authorization = authorization.strip()
+
+    parts = authorization.split(" ", 1)
+
+    if len(parts) != 2:
+        return None
+
+    scheme, token = parts
+
+    if scheme.lower() != "bearer":
+        return None
+
+    return token.strip() or None
+
+
+def authenticate_request(
+    authorization=None,
+    x_api_key=None,
+    x_token=None
+):
+    """
+    Autenticacion compatible con:
+
+    Authorization: Bearer <token>
+    x-token: <token>
+    x-api-key: <BOREALIS_KEY>
+    """
+
+    bearer_token = extract_bearer_token(authorization)
+
+    if bearer_token:
+        session = get_user_from_token(bearer_token)
+
+        if session:
+            return session
+
+    if x_token:
+        session = get_user_from_token(x_token)
+
+        if session:
+            return session
+
+    if x_api_key and config.API_SECRET_KEY:
+        if secrets.compare_digest(
+            str(x_api_key),
+            str(config.API_SECRET_KEY)
+        ):
+            return None
+
+    raise HTTPException(
+        status_code=401,
+        detail="Autenticacion requerida."
+    )
 def get_user_from_token(token):
     if not token: return None
     return auth.verify_token(token)
@@ -234,46 +349,115 @@ async def get_me(x_token: Optional[str] = Header(None)):
     return {"username": session["username"], "role": session["role"]}
 
 @app.post("/api/command")
-async def run_command(req: CommandRequest, request: Request,
-                      x_api_key: Optional[str] = Header(None),
-                      x_token: Optional[str] = Header(None)):
-    session = get_user_from_token(x_token)
-    if not session and x_api_key != config.API_SECRET_KEY:
-        raise HTTPException(status_code=401, detail="Autenticacion requerida.")
-    if not req.command.strip():
-        raise HTTPException(status_code=400, detail="Comando vacio.")
-    user_id = session["username"] if session else "api"
-    start   = time.time()
-    memory.log("INFO", "server", f"[{user_id}] Comando: {req.command}")
-    analytics.track_message(user_id, req.command)
+async def run_command(
+    req: CommandRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    x_token: Optional[str] = Header(None),
+):
+    session = authenticate_request(
+        authorization=authorization,
+        x_api_key=x_api_key,
+        x_token=x_token,
+    )
 
-    # Verificar si el comando activa una skill aprendida
+    if not req.command.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Comando vacio."
+        )
+
+    user_id = (
+        session["username"]
+        if session
+        else "api"
+    )
+
+    start = time.time()
+
+    memory.log(
+        "INFO",
+        "server",
+        f"[{user_id}] Comando: {req.command}"
+    )
+
+    analytics.track_message(
+        user_id,
+        req.command
+    )
+
     matched_skill = find_matching_skill(req.command)
+
     if matched_skill:
-        memory.log("INFO", "skills", f"Skill activada: {matched_skill['nombre']} para comando: {req.command}")
-        elapsed_ms = int((time.time() - start) * 1000)
+        memory.log(
+            "INFO",
+            "skills",
+            f"Skill activada: {matched_skill['nombre']} "
+            f"para comando: {req.command}"
+        )
+
+        elapsed_ms = int(
+            (time.time() - start) * 1000
+        )
+
         return {
             "success": True,
-            "message": f"[Skill: {matched_skill['nombre']}] {matched_skill['descripcion']}",
-            "data": {"skill_activada": matched_skill["nombre"],
-                     "prompt_sistema": matched_skill["prompt_sistema"]},
-            "action": {"type": "skill", "subtype": matched_skill["nombre"],
-                       "target": req.command, "source": "skills_db"},
-            "warnings": [], "response_ms": elapsed_ms, "user": user_id
+            "message": (
+                f"[Skill: {matched_skill['nombre']}] "
+                f"{matched_skill['descripcion']}"
+            ),
+            "data": {
+                "skill_activada": matched_skill["nombre"],
+                "prompt_sistema": matched_skill["prompt_sistema"],
+            },
+            "action": {
+                "type": "skill",
+                "subtype": matched_skill["nombre"],
+                "target": req.command,
+                "source": "skills_db",
+            },
+            "warnings": [],
+            "response_ms": elapsed_ms,
+            "user": user_id,
         }
 
-    action     = listener.parse(req.command)
-    plan       = planner.plan_single(action)
+    action = listener.parse(req.command)
+
+    action.parameters["conversation_context"] = req.context or {}
+    action.parameters["user_id"] = user_id
+
+    plan = planner.plan_single(action)
+
     safe_steps = planner.get_safe_steps(plan)
+
     if not safe_steps:
-        return {"success": False, "message": f"Accion bloqueada: {plan.blocked}",
-                "warnings": plan.warnings}
-    result     = executor.execute(action)
-    elapsed_ms = int((time.time() - start) * 1000)
-    return {"success": result.success, "message": result.message, "data": result.data,
-            "action": {"type": action.action_type, "subtype": action.subtype,
-                       "target": action.target, "source": action.source},
-            "warnings": plan.warnings, "response_ms": elapsed_ms, "user": user_id}
+        return {
+            "success": False,
+            "message": f"Accion bloqueada: {plan.blocked}",
+            "warnings": plan.warnings,
+        }
+
+    result = executor.execute(action)
+
+    elapsed_ms = int(
+        (time.time() - start) * 1000
+    )
+
+    return {
+        "success": result.success,
+        "message": result.message,
+        "data": result.data,
+        "action": {
+            "type": action.action_type,
+            "subtype": action.subtype,
+            "target": action.target,
+            "source": action.source,
+        },
+        "warnings": plan.warnings,
+        "response_ms": elapsed_ms,
+        "user": user_id,
+    }
 
 @app.get("/api/memory/load")
 def load_memory(x_api_key: Optional[str] = Header(None)):
@@ -745,3 +929,6 @@ if __name__ == "__main__":
 
 
 # restart 2026-09-02 00:13:43
+
+
+
