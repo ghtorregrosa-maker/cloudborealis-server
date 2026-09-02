@@ -1,4 +1,4 @@
-"""
+﻿"""
 planner.py — Genera planes de pasos para cumplir objetivos complejos.
 Aplica validaciones de seguridad antes de incluir cada paso.
 """
@@ -76,6 +76,10 @@ def _is_safe_program(program: str) -> Tuple[bool, str]:
     for a in allowed:
         if a in prog_lower:
             return True, ""
+    # Bypass para Sandbox de Python (Fase 3)
+    if any(program.strip().lower().startswith(p) for p in ["ejecuta", "evalua", "run", "print", "python"]):
+        code_to_exec = program.split(":", 1)[-1].strip() if ":" in program else program.strip()
+        return True, sandbox.execute_python_code(code_to_exec)
     return False, f"Programa no está en la lista de permitidos: {program}"
 
 
