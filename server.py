@@ -1,4 +1,4 @@
-"""
+﻿"""
 server.py - Backend EQM con auth, sesiones, analytics, monitor proactivo y skills dinamicas.
 Borealis Corporations - El Que Manda.
 """
