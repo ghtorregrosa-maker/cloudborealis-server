@@ -1,4 +1,4 @@
-"""
+﻿"""
 mind.py - Cerebro real de EQM.
 Lee, comprende, razona y responde con sus propias palabras.
 Sin API externa. v5 - Fase 2: combina hechos ensenados por el dueno.
@@ -338,6 +338,24 @@ def think(question: str, auto_learn: bool = True) -> str:
 
     mind    = get_mind()
     results = mind.search(question, top_k=8, min_score=0.15)
+    # Expansion transitiva para combine_user_facts
+    _user_hits = [r for r in results if r.get("trust") == "user"]
+    if _user_hits:
+        import re as _re
+        _extra_queries = set()
+        for _r in _user_hits[:3]:
+            _words = [w for w in _re.findall(r"[a-zA-Z]{4,}", _r.get("text","").lower())
+                      if w not in {"para","como","desde","hasta","sobre","entre",
+                                   "tiene","hace","sirve","permite","puede","debe"}]
+            _extra_queries.update(_words[:4])
+        _seen_ids = {r["id"] for r in results}
+        for _eq in _extra_queries:
+            _extra = mind.search(_eq, top_k=4, min_score=0.20)
+            for _e in _extra:
+                if _e["id"] not in _seen_ids and _e.get("trust") == "user":
+                    results.append(_e)
+                    _seen_ids.add(_e["id"])
+        results.sort(key=lambda x: x["score"], reverse=True)
 
     if results and results[0]["score"] >= 0.15:
         kb_adapted = _adapt_for_reasoner(results)
