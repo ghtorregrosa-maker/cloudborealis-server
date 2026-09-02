@@ -1,3 +1,4 @@
+﻿import sandbox
 """
 main.py — Punto de entrada principal de CloudBorealisAssistant.
 Inicializa todos los módulos y permite comandos desde consola.
