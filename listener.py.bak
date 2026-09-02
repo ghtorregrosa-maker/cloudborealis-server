@@ -1,6 +1,6 @@
 """
 listener.py - NLP en espanol robusto. Acepta lenguaje libre y con/sin tildes.
-v3 - agrega deteccion de ensenanza directa ("teach") y correccion ("correct").
+v2 - saludos solo si la frase ES un saludo, no si contiene la palabra.
 """
 from __future__ import annotations
 import re, unicodedata
@@ -39,21 +39,7 @@ CODIGO_TRIGGERS = [
     "escribime","escribi un","genera un script","genera un codigo",
 ]
 
-TEACH_TRIGGERS = [
-    "aprende que","quiero ensenarte que","quiero que aprendas que",
-    "te voy a ensenar que","te enseno que","anota que","recorda que",
-    "acordate que","memoriza que",
-]
-
-CORRECCION_TRIGGERS = [
-    "no, la respuesta correcta es","la respuesta correcta es",
-    "te equivocaste, la respuesta es","eso esta mal, la respuesta correcta es",
-    "eso no es correcto, es","en realidad la respuesta es","no es asi, es",
-]
-
 INTENT_MAP: List[Tuple[List[str], str, str]] = [
-    (CORRECCION_TRIGGERS, "correct", "fix"),
-    (TEACH_TRIGGERS, "teach", "fact"),
     (CODIGO_TRIGGERS, "code", "generar"),
     (["que podes hacer","que sabes hacer","cuales son tus funciones","para que sirves",
       "que eres","quien eres","presentate","como te llamas"], "chat", "presentacion"),
@@ -144,6 +130,7 @@ def _is_saludo(text: str) -> bool:
     """
     True solo si la frase ES principalmente un saludo.
     Maximo 5 palabras Y empieza con trigger de saludo.
+    Evita que hola dentro de una frase larga dispare el saludo.
     """
     text_n = _norm(text.strip())
     words  = text_n.split()
@@ -177,12 +164,6 @@ def _parse_by_rules(text: str) -> Optional[Action]:
 
                 if action_type in ("chat", "code"):
                     action.target = text
-
-                elif action_type == "teach":
-                    action.target = after
-
-                elif action_type == "correct":
-                    action.target = after
 
                 elif action_type == "learn":
                     if subtype == "topic":
@@ -239,7 +220,7 @@ def _parse_with_llm(text):
         c   = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
         msg = c.messages.create(
             model="claude-sonnet-4-6", max_tokens=200,
-            system="Parser de comandos en espanol. Solo JSON: {action_type,subtype,target,parameters}. action_type: app,file,web,social,system,meta,learn,analyze,chat,code,teach,correct",
+            system="Parser de comandos en espanol. Solo JSON: {action_type,subtype,target,parameters}. action_type: app,file,web,social,system,meta,learn,analyze,chat,code",
             messages=[{"role":"user","content":text}])
         raw = re.sub(r"```(?:json)?","", msg.content[0].text).strip("` \n")
         d   = _j.loads(raw)
@@ -276,8 +257,6 @@ class Listener:
             "aprender sobre 'FL studio'",
             "aprende https://www.image-line.com/",
             "que sabes sobre python",
-            "aprende que Marte es un planeta rojo",
-            "no, la respuesta correcta es que...",
             "listar temas",
             "abrir chrome",
             "buscar noticias de tecnologia",
@@ -295,6 +274,6 @@ class Listener:
         lines.append("  * hola")
         lines.append("  * que podes hacer")
         lines.append("  * aprende FL studio")
-        lines.append("  * aprende que [hecho que quieras ensenarle]")
         lines.append("  * hace un script en python que imprima hola")
         return "\n".join(lines)
+# v2-fix 00:15:50

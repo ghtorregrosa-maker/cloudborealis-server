@@ -1,7 +1,7 @@
 """
 mind.py - Cerebro real de EQM.
 Lee, comprende, razona y responde con sus propias palabras.
-Sin API externa. v4 - trust por fuente (usuario vs web) + correcciones.
+Sin API externa. v3 - conectado con reasoner.py para sintesis y matematicas.
 """
 from __future__ import annotations
 import re, math, json, threading, unicodedata
@@ -99,7 +99,6 @@ class Mind:
         self._idf: Dict = {}
         self._doc_tf: Dict = {}
         self._rebuild()
-        self.last_answer: Dict = {"question": "", "result_ids": [], "answer_text": ""}
         n = len(self._data["sents"])
         print(f"[Mind] Cerebro activo: {n} ideas indexadas.")
 
@@ -117,13 +116,7 @@ class Mind:
             encoding="utf-8"
         )
 
-    def learn(self, text: str, topic: str, source: str = "web",
-              trust: str = "web") -> int:
-        """
-        Aprende oraciones nuevas.
-        trust="user"  -> ensenado directamente por el dueno, prioridad alta.
-        trust="web"   -> scrapeado de internet, prioridad normal (default).
-        """
+    def learn(self, text: str, topic: str, source: str = "web") -> int:
         sents = _sentences(text)
         added = 0
         with self._lock:
@@ -137,7 +130,6 @@ class Mind:
                     "text":   sent,
                     "topic":  topic.lower(),
                     "source": source,
-                    "trust":  trust,
                     "tokens": _tok(sent),
                 }
                 self._data["sents"].append(entry)
@@ -189,7 +181,6 @@ class Mind:
         """
         Busca oraciones relevantes con score minimo configurable.
         Filtra por dominio para evitar mezclar temas homonimos.
-        Ignora oraciones "superseded" (corregidas) y da boost a trust="user".
         """
         qt     = _tok(query)
         domain = _detect_domain(query)
@@ -197,13 +188,9 @@ class Mind:
             return []
         scored = []
         for d in self._data["sents"]:
-            if d.get("trust") == "superseded":
-                continue
             if not _sent_in_domain(d["text"], domain):
                 continue
             s = self._cosine(d["id"], qt)
-            if d.get("trust") == "user":
-                s = min(1.0, s * 1.6)
             if s >= min_score:
                 scored.append({**d, "score": round(s, 4)})
         scored.sort(key=lambda x: x["score"], reverse=True)
@@ -226,38 +213,6 @@ class Mind:
             "lista": list(self._data["topics"].keys())[:20],
         }
 
-    def record_answer(self, question: str, result_ids: List[int],
-                       answer_text: str) -> None:
-        """Guarda la ultima pregunta respondida, para poder corregirla despues."""
-        self.last_answer = {
-            "question":    question,
-            "result_ids":  result_ids,
-            "answer_text": answer_text,
-        }
-
-    def apply_correction(self, correct_fact: str,
-                          ids_a_bajar: Optional[List[int]] = None,
-                          topic: str = "") -> int:
-        """
-        Aplica una correccion manual del dueno:
-        1. Marca oraciones anteriores como "superseded" (dejan de usarse).
-        2. Aprende el hecho corregido con trust="user".
-        """
-        ids_a_bajar = ids_a_bajar or []
-        if ids_a_bajar:
-            with self._lock:
-                for d in self._data["sents"]:
-                    if d["id"] in ids_a_bajar:
-                        d["trust"] = "superseded"
-                self._save()
-        added = self.learn(
-            correct_fact,
-            topic=topic or correct_fact[:60],
-            source="user_correction",
-            trust="user",
-        )
-        return added
-
 
 _mind: Optional[Mind] = None
 
@@ -272,7 +227,6 @@ def _adapt_for_reasoner(results: List[dict]) -> List[dict]:
     """Convierte resultados de Mind (clave text) al formato de reasoner.py (clave content)."""
     return [
         {
-            "id":      r.get("id"),
             "content": r.get("text", ""),
             "topic":   r.get("topic", ""),
             "source":  r.get("source", ""),
@@ -318,7 +272,6 @@ def think(question: str, auto_learn: bool = True) -> str:
         kb_adapted = _adapt_for_reasoner(results)
         answer = reason_with_fallback(question, kb_adapted)
         if answer and len(answer) > 20:
-            mind.record_answer(question, [r["id"] for r in results[:5]], answer)
             return answer
 
     if not auto_learn:
@@ -345,7 +298,6 @@ def think(question: str, auto_learn: bool = True) -> str:
                 kb_adapted2 = _adapt_for_reasoner(results2)
                 answer2 = reason_with_fallback(question, kb_adapted2)
                 if answer2 and len(answer2) > 20:
-                    mind.record_answer(question, [r["id"] for r in results2[:5]], answer2)
                     return answer2
 
     except Exception:
