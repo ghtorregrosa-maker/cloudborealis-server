@@ -1,4 +1,4 @@
-﻿"""
+"""
 server.py - Backend EQM con auth, sesiones, analytics, monitor proactivo y skills dinamicas.
 Borealis Corporations - El Que Manda.
 """
@@ -400,6 +400,18 @@ async def serve_dashboard(request: Request):
     metrics      = memory.get_metrics()
     skills_count = len(_skills_db)
     temas_html   = "".join(f'<span class="tag">📚 {t.replace("_"," ")}</span>' for t in lista_temas) or '<span style="color:#64748b">Aun sin temas aprendidos</span>'
+    try:
+        from mind import get_mind
+        mind_topics = get_mind().list_topics_detailed()
+    except Exception:
+        mind_topics = []
+    if mind_topics:
+        temas_html = "".join(
+            (f'<span class="tag tag-user" title="Ensenado directamente">🧑‍🏫 {t["topic"][:40]}</span>'
+             if t["has_user"] else
+             f'<span class="tag" title="Aprendido de internet">🌐 {t["topic"][:40]}</span>')
+            for t in mind_topics
+        )
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -483,6 +495,7 @@ h1{{color:var(--green);font-size:1.4rem}}
     </div>
     <div class="card">
       <h3>📚 Conocimiento colectivo</h3>
+      <p style="font-size:0.65rem;color:var(--muted);margin-bottom:8px">🧑‍🏫 Enseñado directamente · 🌐 Aprendido de internet</p>
       <div id="temasList">{temas_html}</div>
     </div>
     <div class="card">

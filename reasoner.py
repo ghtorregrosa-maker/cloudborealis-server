@@ -1,7 +1,8 @@
-﻿"""
+"""
 reasoner.py - Motor de razonamiento propio de EQM.
 Razona, conecta ideas, resuelve matematicas avanzadas.
 Sin API externa. 100% propio.
+v2 - Fase 2: combinacion de hechos ensenados por el dueno + transitividad simple.
 """
 from __future__ import annotations
 import re
@@ -249,7 +250,6 @@ def extract_definition(text: str, topic: str) -> str:
         if total > best_score:
             best_score = total
             best = sent
-    # Agregar segunda oracion complementaria si existe
     if best and best_score > 0:
         others = [s for s in sentences if s != best and _score_sentence(s, topic_words) > 0]
         if others:
@@ -329,6 +329,79 @@ def extract_general(text: str, question: str) -> str:
         top = sentences[:2]
     return ". ".join(top) + "."
 
+# ── Fase 2: combinacion de hechos ensenados por el dueno ──────────────────
+_ES_PATTERN = re.compile(r'^\s*(.+?)\s+es\s+(?:un\s+|una\s+|el\s+|la\s+)?(.+?)\s*$')
+
+def _extract_es_relation(sent: str) -> Optional[Tuple[str, str]]:
+    """
+    Detecta relaciones simples tipo 'A es B' en un hecho ensenado.
+    Puramente sintactico (regex), no comprende el contenido.
+    """
+    s = _norm(sent).strip().rstrip(".")
+    m = _ES_PATTERN.match(s)
+    if not m:
+        return None
+    subj, obj = m.group(1).strip(), m.group(2).strip()
+    if not subj or not obj or len(subj) > 60 or len(obj) > 60:
+        return None
+    if len(subj.split()) > 6:
+        return None
+    return subj, obj
+
+def _find_transitive_chain(user_facts: List[str]) -> Optional[str]:
+    """
+    Si el dueno enseno 'A es B' y por separado 'B es C', arma la cadena
+    y la devuelve como oracion adicional para la respuesta.
+    Solo simbolico: comparacion de texto normalizado, sin comprension real.
+    """
+    relations = []
+    for f in user_facts:
+        r = _extract_es_relation(f)
+        if r:
+            relations.append(r)
+    for subj_a, obj_a in relations:
+        for subj_b, obj_b in relations:
+            if (subj_a, obj_a) == (subj_b, obj_b):
+                continue
+            if obj_a == subj_b and subj_a != obj_b:
+                return f"Esto tambien se relaciona con que {subj_a} es {obj_b}"
+    return None
+
+def combine_user_facts(kb_results: List[Dict]) -> str:
+    """
+    Fase 2: si hay 2+ hechos ensenados directamente por el dueno
+    (trust='user') relevantes a la pregunta, los combina en una
+    respuesta sintetizada en vez de devolver solo el de mayor score.
+    Sigue siendo extractive (concatena texto que el dueno escribio),
+    no generativo: no se inventa ninguna palabra nueva.
+    Devuelve "" si no hay al menos 2 hechos de trust='user' distintos,
+    para que el llamador haga fallback al comportamiento normal.
+    """
+    user_facts_raw = [r.get("content", "").strip().rstrip(".") for r in kb_results
+                       if r.get("trust") == "user" and r.get("content")]
+
+    seen, user_facts = set(), []
+    for f in user_facts_raw:
+        k = _norm(f)[:80]
+        if k not in seen and f:
+            seen.add(k)
+            user_facts.append(f)
+
+    if len(user_facts) < 2:
+        return ""
+
+    conectores = ["Además,", "También,", "Sumado a esto,"]
+    partes = [user_facts[0] + "."]
+    for i, fact in enumerate(user_facts[1:4]):
+        conector = conectores[i % len(conectores)]
+        partes.append(f"{conector} {fact}.")
+
+    chain = _find_transitive_chain(user_facts)
+    if chain:
+        partes.append(chain + ".")
+
+    return " ".join(partes)
+
 # ── Motor principal ───────────────────────────────────────────────────────
 def reason(question: str, kb_results: List[Dict]) -> str:
     """
@@ -341,28 +414,23 @@ def reason(question: str, kb_results: List[Dict]) -> str:
     qtype    = detect_question_type(question)
     all_text = " ".join(r.get("content","") for r in kb_results[:5])
 
-    # Matematicas avanzadas primero
     if qtype == "calculo_avanzado":
         adv = solve_advanced_math(question)
         if adv:
             return adv
 
-    # Matematicas basicas
     if qtype == "calculo":
         basic = solve_basic_math(question)
         if basic:
             return f"El resultado es {basic}."
-        # Intentar avanzado como fallback
         adv = solve_advanced_math(question)
         if adv:
             return adv
 
-    # Verificar si es calculo avanzado aunque no detectado como tal
     adv_attempt = solve_advanced_math(question)
     if adv_attempt:
         return adv_attempt
 
-    # Extraer respuesta segun tipo
     if qtype == "definicion":
         topic  = re.sub(r'(?i)qu[eé]\s+(es|son)\s+(la\s+|el\s+|los\s+|las\s+)?', '', question).strip()
         answer = extract_definition(all_text, topic or question)
@@ -389,7 +457,6 @@ def reason(question: str, kb_results: List[Dict]) -> str:
     else:
         answer = extract_general(all_text, question)
 
-    # Limpiar y limitar
     answer = re.sub(r'\s+', ' ', answer).strip()
     if len(answer) > 650:
         cut    = answer[:650].rfind('.')
@@ -402,14 +469,12 @@ def reason_with_fallback(question: str, kb_results: List[Dict]) -> str:
     Razona y si no encuentra respuesta especifica,
     sintetiza el contenido mas relevante.
     """
-    # Intentar matematica avanzada primero sin importar KB
     adv = solve_advanced_math(question)
     if adv:
         return adv
 
     answer = reason(question, kb_results)
 
-    # Si la respuesta es muy corta, hacer sintesis
     if not answer or len(answer) < 30:
         all_text  = " ".join(r.get("content","") for r in kb_results[:3])
         sentences = _dedup_sentences(re.split(r'[.!?]', all_text))

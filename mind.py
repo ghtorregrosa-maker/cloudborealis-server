@@ -1,7 +1,7 @@
 """
 mind.py - Cerebro real de EQM.
 Lee, comprende, razona y responde con sus propias palabras.
-Sin API externa. v4 - trust por fuente (usuario vs web) + correcciones.
+Sin API externa. v5 - Fase 2: combina hechos ensenados por el dueno.
 """
 from __future__ import annotations
 import re, math, json, threading, unicodedata
@@ -258,6 +258,28 @@ class Mind:
         )
         return added
 
+    def list_topics_detailed(self) -> List[dict]:
+        """
+        Devuelve los temas agrupados con indicador de si tienen al menos
+        un hecho ensenado directamente por el dueno (trust="user").
+        Usado por el dashboard para distinguir visualmente lo ensenado
+        de lo scrapeado de internet.
+        """
+        agg: Dict[str, dict] = {}
+        for d in self._data["sents"]:
+            if d.get("trust") == "superseded":
+                continue
+            t = d.get("topic", "").strip()
+            if not t:
+                continue
+            if t not in agg:
+                agg[t] = {"topic": t, "count": 0, "has_user": False}
+            agg[t]["count"] += 1
+            if d.get("trust") == "user":
+                agg[t]["has_user"] = True
+        ordenado = sorted(agg.values(), key=lambda x: (not x["has_user"], -x["count"]))
+        return ordenado[:40]
+
 
 _mind: Optional[Mind] = None
 
@@ -276,6 +298,7 @@ def _adapt_for_reasoner(results: List[dict]) -> List[dict]:
             "content": r.get("text", ""),
             "topic":   r.get("topic", ""),
             "source":  r.get("source", ""),
+            "trust":   r.get("trust", "web"),
             "score":   r.get("score", 0),
         }
         for r in results
@@ -287,7 +310,8 @@ def think(question: str, auto_learn: bool = True) -> str:
     Punto de entrada principal del cerebro de EQM.
     1. Resuelve matematicas primero, antes de tocar la KB.
     2. Busca en el indice TF-IDF propio.
-    3. Delega la sintesis de respuesta a reasoner.py.
+    3. Si hay 2+ hechos ensenados por el dueno relevantes, los combina
+       (Fase 2). Si no, delega la sintesis de respuesta a reasoner.py.
     4. Si no sabe, aprende y reintenta.
     """
     from reasoner import (
@@ -295,6 +319,7 @@ def think(question: str, auto_learn: bool = True) -> str:
         solve_basic_math,
         solve_advanced_math,
         reason_with_fallback,
+        combine_user_facts,
     )
 
     qtype = detect_question_type(question)
@@ -316,6 +341,12 @@ def think(question: str, auto_learn: bool = True) -> str:
 
     if results and results[0]["score"] >= 0.15:
         kb_adapted = _adapt_for_reasoner(results)
+
+        combined = combine_user_facts(kb_adapted)
+        if combined:
+            mind.record_answer(question, [r["id"] for r in results[:5]], combined)
+            return combined
+
         answer = reason_with_fallback(question, kb_adapted)
         if answer and len(answer) > 20:
             mind.record_answer(question, [r["id"] for r in results[:5]], answer)
