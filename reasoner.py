@@ -86,3 +86,11 @@ def handle_code_request(text: str) -> str:
         "imprimir un mensaje, sumar/restar/multiplicar/dividir dos numeros, "
         "leer un archivo, escribir un archivo, contar palabras de un texto, o un bucle que imprima numeros en un rango."
     )
+def detect_question_type(question: str) -> str:
+    """Detecta el tipo de pregunta para enrutamiento interno."""
+    q = question.lower()
+    if any(k in q for k in ["codigo", "python", "script", "imprimir", "función", "bucle"]):
+        return "code"
+    if any(k in q for k in ["que es", "quien es", "como funciona", "donde"]):
+        return "fact"
+    return "general"
