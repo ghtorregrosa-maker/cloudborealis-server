@@ -46,6 +46,8 @@ class Executor:
             "analyze": self._handle_analyze,
             "chat":    self._handle_chat,
             "code":    self._handle_code,
+            "teach":   self._handle_teach,
+            "correct": self._handle_correct,
         }
 
         handler = handlers.get(action.action_type)
@@ -373,6 +375,71 @@ class Executor:
 
     # â”€â”€ Social â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # ── Generacion de codigo ─────────────────────────────────────────────
+    # -- Ensenanza directa y correccion -----------------------------------
+    def _handle_teach(self, action: Action) -> ExecutionResult:
+        """El dueno le ensena un hecho directamente. Se guarda con
+        trust='user', prioridad maxima sobre lo scrapeado de internet."""
+        hecho = (action.target or action.raw_command or "").strip().strip("'\"").strip()
+        if not hecho or len(hecho) < 5:
+            return ExecutionResult(False,
+                "Decime que queres que aprenda. Ej: 'aprende que Marte es un planeta rojo'")
+        try:
+            from mind import get_mind
+            mind  = get_mind()
+            topic = hecho[:60]
+            added = mind.learn(hecho, topic=topic, source="user_taught", trust="user")
+            mind.record_answer(question=hecho, result_ids=[], answer_text=hecho)
+        except Exception as e:
+            return ExecutionResult(False, f"No pude guardar lo que me ensenaste: {e}")
+
+        try:
+            from knowledge_base import get_kb
+            get_kb().learn_topic(topic=topic, content=hecho, source="user_taught")
+        except Exception as e:
+            print(f"[Executor] No se pudo espejar la ensenanza en la KB: {e}")
+
+        if added > 0:
+            return ExecutionResult(True,
+                "Listo, aprendi eso. A partir de ahora lo voy a priorizar "
+                "por sobre lo que encuentre por mi cuenta en internet.")
+        return ExecutionResult(True, "Ya sabia eso, pero gracias igual.")
+
+    def _handle_correct(self, action: Action) -> ExecutionResult:
+        """El dueno corrige la ultima respuesta que dio EQM."""
+        correccion = (action.target or "").strip().strip("'\"").strip()
+        if not correccion or len(correccion) < 3:
+            return ExecutionResult(False,
+                "Decime cual es la respuesta correcta. Ej: 'no, la "
+                "respuesta correcta es que Marte es rojo por el oxido de hierro'")
+
+        try:
+            from mind import get_mind
+            mind = get_mind()
+            last = mind.last_answer
+            pregunta_anterior   = last.get("question", "") or "(sin pregunta registrada)"
+            respuesta_anterior  = last.get("answer_text", "") or "(sin respuesta previa)"
+            mind.apply_correction(
+                correccion,
+                ids_a_bajar=last.get("result_ids", []),
+                topic=pregunta_anterior,
+            )
+        except Exception as e:
+            return ExecutionResult(False, f"No pude aplicar la correccion: {e}")
+
+        try:
+            self.memory.record_correction(
+                pattern=pregunta_anterior,
+                original_action=respuesta_anterior,
+                corrected_action=correccion,
+                reason="Correccion manual del dueno",
+            )
+        except Exception:
+            pass
+
+        return ExecutionResult(True,
+            "Gracias, corregi lo que sabia sobre eso. La proxima vez que "
+            "me preguntes algo relacionado, voy a responder con esto.")
+
     def _handle_code(self, action: Action) -> ExecutionResult:
         """Genera codigo simple a partir de un pedido en lenguaje natural.
         No usa APIs externas de IA: usa deteccion de patrones + templates
