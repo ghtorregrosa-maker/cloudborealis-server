@@ -34,8 +34,8 @@ def privacy():
 def oauth_callback(code: str):
     url = "https://open-api.tiktokglobalshop.com/oauth/access_token/"
     payload = {
-        "client_key": "TU_CLIENT_KEY",
-        "client_secret": "TU_CLIENT_SECRET",
+        "client_key": "aw07ofuldk0fj851",
+        "client_secret": "TARdEelCWjyNSNdf36SukCA7d4EBlowO",
         "code": code,
         "grant_type": "authorization_code"
     }
