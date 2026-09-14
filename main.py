@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+import requests
 
 app = FastAPI()
 
@@ -28,3 +29,15 @@ def privacy():
       </body>
     </html>
     """
+
+@app.get("/oauth/callback")
+def oauth_callback(code: str):
+    url = "https://open-api.tiktokglobalshop.com/oauth/access_token/"
+    payload = {
+        "client_key": "TU_CLIENT_KEY",
+        "client_secret": "TU_CLIENT_SECRET",
+        "code": code,
+        "grant_type": "authorization_code"
+    }
+    r = requests.post(url, data=payload)
+    return r.json()
